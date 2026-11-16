@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kicad-mcp"
+version = "0.5.2"
+description = "MCP server for KiCad 10 - schematic analysis, validation, manufacturing exports, and live IPC PCB editing"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "sklee", email = "skfine24@gmail.com" }]
+keywords = ["kicad", "mcp", "pcb", "eda", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+    "fastmcp>=2.0.0,<5",
+    "kicad-python>=0.8.0,<0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+kicad-mcp = "kicad_mcp.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/skfine24/KiCad_MCP"
+Repository = "https://github.com/skfine24/KiCad_MCP"
+Issues = "https://github.com/skfine24/KiCad_MCP/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+kicad_mcp = ["py.typed"]

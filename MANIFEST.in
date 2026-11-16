@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+include log.md
+recursive-include src *.py py.typed
+recursive-include tests *.py
+prune boards
+prune .venv
+prune dist
+prune build
+global-exclude __pycache__ *.py[cod] *.bak
