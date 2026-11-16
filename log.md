@@ -45,6 +45,8 @@ virtualenv; tests and configuration used machine-specific paths.
   (editable install).
 - GitHub repo `skfine24/KiCad_MCP` public; tag `v0.5.2`; `uvx` from the tag ->
   38 tools (initialize + tools/list).
+- GitHub release `v0.5.2` with `kicad_mcp-0.5.2-py3-none-any.whl` and
+  `kicad_mcp-0.5.2.tar.gz` assets.
 - opencode config updated; restart required to load the new command.
 
 # 2026-11-16: KiCad MCP server v0.5.2 (`ipc_open_board` launcher)
