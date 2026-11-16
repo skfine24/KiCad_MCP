@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kicad-mcp"
-version = "0.5.2"
-description = "MCP server for KiCad 10 - schematic analysis, validation, manufacturing exports, and live IPC PCB editing"
+version = "0.6.0"
+description = "MCP server for KiCad 10 - fresh netlists, structured DRC/ERC, transactional PCB/schematic editing, library search, mechanical checks, and manufacturing manifests"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

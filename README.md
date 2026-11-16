@@ -65,18 +65,32 @@ Run the server directly over stdio:
 
 ## Tools
 
+v0.6.0 adds fresh-netlist revisions, structured/paginated DRC/ERC, transactional
+PCB batches, schematic text editing, library search, mechanical checks,
+manufacturing manifests and BOM enrichment.
+
 | Category | Tools |
 |---|---|
 | Project | `create_project`, `list_projects` |
-| Schematic analysis | `read_schematic`, `list_components` |
-| Connectivity | `export_netlist`, `list_nets`, `trace_net` (pin-level, netlist-based) |
-| Validation | `run_erc`, `run_drc` (violations include per-item positions; optional `refill_first`), `find_duplicate_tracks` (exact/overlapping/parallel-redundant segments, duplicate vias, zero-length segments, dangling ends, single-layer/isolated vias; parallel pairs classified loop vs series) |
-| Manufacturing | `export_gerbers`, `export_drill`, `export_bom`, `export_pos`, `render_pcb` (exports report only the files they wrote) |
-| PCB inspection | `get_board_info`, `find_isolated_islands` (zone fill connectivity groups per net) |
-| PCB editing | `add_tracks`, `add_via`, `delete_tracks`, `trim_track`, `prune_dangling`, `refill_zones` (save in place, timestamped `.bak` backup by default; `.bak` files are analyzed on a temp copy) |
-| Staged editing | `edit_begin`, `edit_commit` (edit a fast local copy, then write back - useful for network paths) |
-| Live IPC | `ipc_open_board` (launch `pcbnew.exe` and wait for the document), `ipc_board_info`, `ipc_list_nets`, `ipc_list_items`, `ipc_get_selection`, `ipc_items_at_point`, `ipc_add_track`, `ipc_add_via`, `ipc_delete_items`, `ipc_save`, `ipc_refill_zones`, `ipc_set_active_layer` (open KiCad board via IPC; requires KiCad GUI + API server enabled) |
-| Status | `get_kicad_version` (kicad-cli version + live IPC status; reports transport connection and any document-level error separately) |
+| Schematic analysis | `read_schematic`, `list_components`, `sch_revision` |
+| Connectivity | `export_netlist`, `list_nets`, `trace_net` (fresh export by default; `refresh`, `expected_revision`, mtime/hash metadata) |
+| Validation | `run_erc`, `run_drc` (structured severity/type/net/items, `offset`/`limit`, filters, report SHA-256), `find_duplicate_tracks`, `find_isolated_islands` |
+| PCB inspection | `get_board_info` (KiCad 10 pad-level nets, thickness, stackup, netclasses, unconnected pads, optional schematic net merge), `pcb_revision` |
+| PCB editing | `add_tracks`, `add_via`, `delete_tracks`, `trim_track`, `prune_dangling`, `refill_zones`, `pcb_batch` (one transaction, dry-run, rollback, expected revision, local staging + atomic save), `set_pad_net`, `set_footprint_value`, `replace_footprint`, `place_footprint`, `set_zone_connection`, `add_zone`, `add_keepout`, `set_zone_priority`, `remove_islands`, `delete_zone` |
+| Schematic editing | `sch_add_wire`, `sch_add_label`, `sch_add_no_connect`, `sch_set_value`, `sch_set_property`, `sch_add_symbol` (embeds/flattens lib_symbols, supports `extends`), `sch_delete_item` |
+| Library | `search_symbols`, `search_footprints`, `get_pinout`, `get_footprint_info`, `list_libraries` |
+| Mechanical | `mechanical_check`, `check_courtyard`, `check_3d_models`, `board_edge_clearance` |
+| Manufacturing | `export_gerbers` (optional standard profile), `export_drill`, `export_bom`, `export_pos`, `export_step`, `export_pdf`, `manufacturing_profile` (standard layers + drill/POS/BOM/STEP/PDF + SHA-256 manifest), `verify_manufacturing_output` |
+| BOM | `bom_enrich` (MPN/Manufacturer/Supplier/Stock/Alternate + database merge), `bom_validate_mpn` |
+| Staged editing | `edit_begin`, `edit_commit` (atomic commit with backup/revision) |
+| Live IPC | `ipc_open_board`, `ipc_board_info`, `ipc_get_schematic`, `ipc_list_nets`, `ipc_list_items`, `ipc_get_selection`, `ipc_items_at_point`, `ipc_add_track`, `ipc_add_via`, `ipc_batch` (one undo step via begin/push/drop commit), `ipc_delete_items`, `ipc_save`, `ipc_refill_zones`, `ipc_set_active_layer` |
+| Status | `get_kicad_version`, `doctor`, `self_test` |
+
+Resources: `kicad://board` (live IPC), `kicad://schematic` (live IPC),
+`kicad://schematic-file/{path*}`, `kicad://project/{path*}`.
+
+Safe mode: set `KICAD_MCP_SAFE_MODE=1` to require `confirm=True` on destructive
+tools. `dry_run` is available on PCB/schematic edit tools.
 
 ## Live IPC connection (optional)
 

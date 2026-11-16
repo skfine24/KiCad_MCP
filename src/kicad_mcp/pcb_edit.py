@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import kicad_cli
+from . import kicad_cli, paths
 
 _DEFAULT_TIMEOUT = 300.0
 
@@ -417,6 +417,316 @@ except Exception as exc:
     out = {"error": "exception", "message": "{}: {}".format(type(exc).__name__, exc)}
 print(json.dumps(out))
 
+"""
+
+_BATCH_SCRIPT = r"""
+import json, math, sys, traceback
+import pcbnew
+
+MM = 1e6
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+out = {"operations": [], "ok": True}
+_KEEP_ALIVE = []
+
+_LAYERS = {
+    "F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu,
+    "F.SilkS": pcbnew.F_SilkS, "B.SilkS": pcbnew.B_SilkS,
+    "F.Mask": pcbnew.F_Mask, "B.Mask": pcbnew.B_Mask,
+    "F.Paste": pcbnew.F_Paste, "B.Paste": pcbnew.B_Paste,
+    "F.Adhes": pcbnew.F_Adhes, "B.Adhes": pcbnew.B_Adhes,
+    "Edge.Cuts": pcbnew.Edge_Cuts, "F.CrtYd": pcbnew.F_CrtYd,
+    "B.CrtYd": pcbnew.B_CrtYd, "F.Fab": pcbnew.F_Fab, "B.Fab": pcbnew.B_Fab,
+}
+
+_CONNECTION = {
+    "full": pcbnew.ZONE_CONNECTION_FULL,
+    "thermal": pcbnew.ZONE_CONNECTION_THERMAL,
+    "none": pcbnew.ZONE_CONNECTION_NONE,
+    "tht_thermal": pcbnew.ZONE_CONNECTION_THT_THERMAL,
+    "inherited": pcbnew.ZONE_CONNECTION_INHERITED,
+}
+
+_ISLAND = {
+    "always": pcbnew.ISLAND_REMOVAL_MODE_ALWAYS,
+    "area": pcbnew.ISLAND_REMOVAL_MODE_AREA,
+    "never": pcbnew.ISLAND_REMOVAL_MODE_NEVER,
+}
+
+
+def mm(value):
+    return int(round(float(value) * MM))
+
+
+def layer_id(name):
+    if name in _LAYERS:
+        return _LAYERS[name]
+    return pcbnew.GetLayer(name)
+
+
+def layer_set(names):
+    result = pcbnew.LSET()
+    for name in names:
+        result.AddLayer(layer_id(name))
+    return result
+
+
+def find_net(name):
+    net = board.FindNet(name)
+    if net is None:
+        raise ValueError("net_not_found: {}".format(name))
+    return net
+
+
+def find_fp(ref):
+    for fp in board.GetFootprints():
+        if fp.GetReference() == ref:
+            return fp
+    raise ValueError("footprint_not_found: {}".format(ref))
+
+
+def find_pad(fp, number):
+    for pad in fp.Pads():
+        if str(pad.GetNumber()) == str(number):
+            return pad
+    raise ValueError("pad_not_found: {} pad {}".format(fp.GetReference(), number))
+
+
+def zone_at(index):
+    zones = list(board.Zones())
+    if index is None or index < 0 or index >= len(zones):
+        raise ValueError("zone_index_out_of_range: {}".format(index))
+    return zones[index]
+
+
+def poly_from_points(points):
+    poly = pcbnew.SHAPE_POLY_SET()
+    poly.NewOutline()
+    for point in points:
+        poly.Append(pcbnew.VECTOR2I(mm(point[0]), mm(point[1])))
+    return poly
+
+
+def apply(op):
+    kind = op["kind"]
+    if kind == "add_tracks":
+        net = find_net(op["net"])
+        lid = layer_id(op["layer"])
+        points = op["points"]
+        if len(points) < 2:
+            raise ValueError("add_tracks needs at least 2 points")
+        uuids = []
+        for i in range(len(points) - 1):
+            track = pcbnew.PCB_TRACK(board)
+            track.SetStart(pcbnew.VECTOR2I(mm(points[i][0]), mm(points[i][1])))
+            track.SetEnd(pcbnew.VECTOR2I(mm(points[i + 1][0]), mm(points[i + 1][1])))
+            track.SetWidth(mm(op["width"]))
+            track.SetLayer(lid)
+            track.SetNetCode(net.GetNetCode())
+            board.Add(track)
+            _KEEP_ALIVE.append(track)
+            uuids.append(track.m_Uuid.AsString())
+        return {"added_segments": len(uuids), "uuids": uuids, "net": net.GetNetname()}
+    if kind == "add_via":
+        net = find_net(op["net"])
+        via = pcbnew.PCB_VIA(board)
+        via.SetPosition(pcbnew.VECTOR2I(mm(op["x"]), mm(op["y"])))
+        via.SetWidth(mm(op.get("diameter", 0.6)))
+        via.SetDrill(mm(op.get("drill", 0.3)))
+        via.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        via.SetNetCode(net.GetNetCode())
+        board.Add(via)
+        _KEEP_ALIVE.append(via)
+        return {"via_added": True, "uuid": via.m_Uuid.AsString(), "net": net.GetNetname()}
+    if kind == "delete_tracks":
+        targets = {t.m_Uuid.AsString(): t for t in board.GetTracks()}
+        removed, missing = [], []
+        for uuid in op["uuids"]:
+            item = targets.get(uuid)
+            if item is None:
+                missing.append(uuid)
+            else:
+                board.Remove(item)
+                _KEEP_ALIVE.append(item)
+                removed.append(uuid)
+        return {"removed": removed, "removed_count": len(removed), "missing": missing}
+    if kind == "trim_track":
+        target = None
+        for track in board.GetTracks():
+            if track.Type() == pcbnew.PCB_VIA_T:
+                continue
+            if track.m_Uuid.AsString() == op["uuid"]:
+                target = track
+                break
+        if target is None:
+            raise ValueError("track_not_found: {}".format(op["uuid"]))
+        start, end = target.GetStart(), target.GetEnd()
+        frm = op["from_mm"]
+        ds = (pcbnew.ToMM(start.x) - frm[0]) ** 2 + (pcbnew.ToMM(start.y) - frm[1]) ** 2
+        de = (pcbnew.ToMM(end.x) - frm[0]) ** 2 + (pcbnew.ToMM(end.y) - frm[1]) ** 2
+        to = op["to_mm"]
+        if ds <= de:
+            target.SetStart(pcbnew.VECTOR2I(mm(to[0]), mm(to[1])))
+            which = "start"
+        else:
+            target.SetEnd(pcbnew.VECTOR2I(mm(to[0]), mm(to[1])))
+            which = "end"
+        return {"trimmed": True, "uuid": op["uuid"], "endpoint": which}
+    if kind == "set_pad_net":
+        fp = find_fp(op["ref"])
+        pad = find_pad(fp, op["pad"])
+        net = find_net(op["net"])
+        pad.SetNet(net)
+        return {"ref": op["ref"], "pad": op["pad"], "net": net.GetNetname()}
+    if kind == "set_footprint_value":
+        fp = find_fp(op["ref"])
+        fp.SetValue(str(op["value"]))
+        return {"ref": op["ref"], "value": fp.GetValue()}
+    if kind == "replace_footprint":
+        old = find_fp(op["ref"])
+        io = pcbnew.PCB_IO_KICAD_SEXPR()
+        new = io.FootprintLoad(op["lib_path"], op["name"])
+        if new is None:
+            raise ValueError("footprint_load_failed: {} {}".format(op["lib_path"], op["name"]))
+        new.SetFPIDAsString(op.get("lib_id") or op["name"])
+        new.SetReference(old.GetReference())
+        new.SetValue(old.GetValue() if op.get("keep_value", True) else str(op.get("value", old.GetValue())))
+        new.SetPosition(old.GetPosition())
+        new.SetOrientation(old.GetOrientation())
+        new.SetLayer(old.GetLayer())
+        if op.get("transfer_nets", True):
+            old_nets = {pad.GetNumber(): pad.GetNetname() for pad in old.Pads()}
+            for pad in new.Pads():
+                netname = old_nets.get(pad.GetNumber())
+                if netname:
+                    net = board.FindNet(netname)
+                    if net is not None:
+                        pad.SetNet(net)
+        board.Remove(old)
+        _KEEP_ALIVE.append(old)
+        board.Add(new)
+        _KEEP_ALIVE.append(new)
+        return {"ref": op["ref"], "footprint": new.GetFPIDAsString(), "value": new.GetValue()}
+    if kind == "place_footprint":
+        io = pcbnew.PCB_IO_KICAD_SEXPR()
+        fp = io.FootprintLoad(op["lib_path"], op["name"])
+        if fp is None:
+            raise ValueError("footprint_load_failed: {} {}".format(op["lib_path"], op["name"]))
+        fp.SetFPIDAsString(op.get("lib_id") or op["name"])
+        fp.SetReference(str(op["reference"]))
+        fp.SetValue(str(op.get("value", "")))
+        fp.SetPosition(pcbnew.VECTOR2I(mm(op["x"]), mm(op["y"])))
+        fp.SetOrientationDegrees(float(op.get("rotation", 0)))
+        fp.SetLayer(layer_id(op.get("layer", "F.Cu")))
+        for pad_number, net_name in (op.get("pad_nets") or {}).items():
+            pad = find_pad(fp, pad_number)
+            pad.SetNet(find_net(net_name))
+        board.Add(fp)
+        _KEEP_ALIVE.append(fp)
+        return {"reference": fp.GetReference(), "footprint": fp.GetFPIDAsString(), "pads": fp.GetPadCount()}
+    if kind == "set_zone_connection":
+        mode = _CONNECTION[str(op.get("mode", "inherited"))]
+        if op.get("target") == "pad":
+            fp = find_fp(op["ref"])
+            pad = find_pad(fp, op["pad"])
+            pad.SetLocalZoneConnection(mode)
+            return {"target": "pad", "ref": op["ref"], "pad": op["pad"], "mode": op.get("mode")}
+        zone = zone_at(op.get("zone_index"))
+        zone.SetPadConnection(mode)
+        return {"target": "zone", "zone_index": op.get("zone_index"), "mode": op.get("mode")}
+    if kind == "add_zone":
+        zone = pcbnew.ZONE(board)
+        zone.SetLayerSet(layer_set(op["layers"]))
+        zone.SetNet(find_net(op["net"]))
+        zone.SetAssignedPriority(int(op.get("priority", 0)))
+        zone.SetLocalClearance(mm(op.get("clearance", 0.2)))
+        zone.SetMinThickness(mm(op.get("min_thickness", 0.25)))
+        zone.SetPadConnection(_CONNECTION[str(op.get("pad_connection", "thermal"))])
+        zone.SetFillMode(
+            pcbnew.ZONE_FILL_MODE_HATCH_PATTERN
+            if op.get("fill_mode") == "hatch"
+            else pcbnew.ZONE_FILL_MODE_POLYGONS
+        )
+        zone.SetIslandRemovalMode(_ISLAND[str(op.get("island_removal", "always"))])
+        zone.SetMinIslandArea(int(mm(op.get("min_island_area_mm2", 1.0)) * MM))
+        outline = poly_from_points(op["points"])
+        zone.SetOutline(outline)
+        _KEEP_ALIVE.append(outline)
+        board.Add(zone)
+        _KEEP_ALIVE.append(zone)
+        return {"zone_added": True, "net": zone.GetNetname(), "layers": op["layers"]}
+    if kind == "add_keepout":
+        zone = pcbnew.ZONE(board)
+        zone.SetLayerSet(layer_set(op["layers"]))
+        zone.SetIsRuleArea(True)
+        zone.SetDoNotAllowTracks(bool(op.get("tracks", True)))
+        zone.SetDoNotAllowVias(bool(op.get("vias", True)))
+        zone.SetDoNotAllowPads(bool(op.get("pads", True)))
+        zone.SetDoNotAllowZoneFills(bool(op.get("zone_fills", True)))
+        zone.SetDoNotAllowFootprints(bool(op.get("footprints", False)))
+        outline = poly_from_points(op["points"])
+        zone.SetOutline(outline)
+        _KEEP_ALIVE.append(outline)
+        board.Add(zone)
+        _KEEP_ALIVE.append(zone)
+        return {"keepout_added": True, "layers": op["layers"]}
+    if kind == "set_zone_priority":
+        zone = zone_at(op["zone_index"])
+        zone.SetAssignedPriority(int(op["priority"]))
+        return {"zone_index": op["zone_index"], "priority": zone.GetAssignedPriority()}
+    if kind == "remove_islands":
+        net_name = op.get("net")
+        mode = _ISLAND[str(op.get("mode", "always"))]
+        min_area = int(mm(op.get("min_area_mm2", 1.0)) * MM)
+        touched = 0
+        for zone in board.Zones():
+            if net_name and zone.GetNetname() != net_name:
+                continue
+            zone.SetIslandRemovalMode(mode)
+            zone.SetMinIslandArea(min_area)
+            touched += 1
+        return {"zones_touched": touched, "net": net_name, "mode": op.get("mode", "always")}
+    if kind == "delete_zone":
+        zone = zone_at(op["zone_index"])
+        board.Remove(zone)
+        _KEEP_ALIVE.append(zone)
+        return {"zone_deleted": True, "zone_index": op["zone_index"]}
+    if kind == "refill":
+        ok = pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+        return {"refilled": bool(ok), "zone_count": len(list(board.Zones()))}
+    raise ValueError("unknown_operation: {}".format(kind))
+
+
+try:
+    board = pcbnew.LoadBoard(p["pcb"])
+    for op in p["operations"]:
+        try:
+            result = apply(op)
+            out["operations"].append({"kind": op["kind"], "ok": True, "result": result})
+        except Exception as exc:
+            out["operations"].append({"kind": op["kind"], "ok": False,
+                                      "error": "{}: {}".format(type(exc).__name__, exc)})
+            out["ok"] = False
+            out["error"] = "{}: {}".format(type(exc).__name__, exc)
+            break
+    if out["ok"] and p.get("refill"):
+        ok = pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+        out["refill"] = {"refilled": bool(ok), "zone_count": len(list(board.Zones()))}
+    out["stats"] = {
+        "tracks": len(board.GetTracks()),
+        "footprints": len(board.GetFootprints()),
+        "zones": len(list(board.Zones())),
+        "pads": len(board.GetPads()),
+    }
+    if out["ok"] and not p.get("dry_run"):
+        pcbnew.SaveBoard(p["pcb"], board)
+        out["saved"] = True
+    else:
+        out["saved"] = False
+except Exception as exc:
+    out["ok"] = False
+    out["error"] = "{}: {}".format(type(exc).__name__, exc)
+    out["traceback"] = traceback.format_exc()
+print(json.dumps(out))
 """
 
 _DUPLICATE_TRACKS_SCRIPT = r"""
@@ -933,36 +1243,380 @@ def _require_pcb(path: str | Path) -> Path:
 
 
 def _run_on_pcb(script: str, pcb: Path, params: dict, timeout: float, write_back: bool) -> dict:
-    """Run a pcbnew script against a board file. pcbnew.LoadBoard only accepts
-    .kicad_pcb names, so any other suffix (.bak backups, ...) is analyzed on a
-    local temp .kicad_pcb copy; the copy is written back on success for edits."""
-    tmp_copy = None
+    """Run a pcbnew script against a local staging copy of the board.
+
+    pcbnew.SaveBoard is unstable when it writes directly to a Korean UNC path
+    (observed 0xC0000005 crashes).  Every run therefore loads and saves a
+    local ``.kicad_pcb`` staging file and, for edits, atomically replaces the
+    original only after the script succeeded.
+    """
+    staging = paths.stage_local(pcb, suffix=".kicad_pcb")
     try:
-        if pcb.suffix.lower() != ".kicad_pcb":
-            tmp_dir = Path(tempfile.gettempdir()) / "kicad-mcp"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            tmp_copy = tmp_dir / f"{uuid.uuid4().hex}{pcb.name}.kicad_pcb"
-            shutil.copy2(pcb, tmp_copy)
-            run_path = tmp_copy
-        else:
-            run_path = pcb
-        result = _run_script(script, {**params, "pcb": str(run_path)}, timeout=timeout)
-        if write_back and tmp_copy is not None and result.get("ok"):
-            shutil.copy2(tmp_copy, pcb)
+        result = _run_script(script, {**params, "pcb": str(staging)}, timeout=timeout)
+        if write_back and result.get("ok"):
+            paths.atomic_copy(staging, pcb)
         return result
     finally:
-        if tmp_copy is not None:
+        try:
+            staging.unlink()
+        except OSError:
+            pass
+
+
+def _backup(pcb: Path) -> str | None:
+    return paths.backup_file(pcb)
+
+
+def resolve_footprint(footprint: str) -> dict:
+    """Resolve ``Library:Footprint`` or a bare name to a .pretty library."""
+    from . import library
+
+    return library.resolve_footprint(footprint)
+
+
+def pcb_batch(
+    pcb_path: str | Path,
+    operations: list[dict],
+    dry_run: bool = False,
+    backup: bool = True,
+    expected_revision: str | None = None,
+    refill: bool = False,
+    timeout: float = 600.0,
+) -> dict:
+    """Apply a list of PCB operations in one pcbnew process and save once.
+
+    The board is loaded and saved on a local staging copy; the original is
+    replaced atomically only after every operation succeeds.  dry_run applies
+    the operations in memory and returns the planned result without writing.
+    """
+    pcb = _require_pcb(pcb_path)
+    if not isinstance(operations, list) or not operations:
+        raise ValueError("operations must be a non-empty list")
+    with paths.locked(pcb):
+        if expected_revision and not paths.revision_matches(pcb, expected_revision):
+            raise RuntimeError(
+                "revision mismatch: pcb changed since it was read "
+                f"(expected {expected_revision})"
+            )
+        staging = paths.stage_local(pcb, suffix=".kicad_pcb")
+        try:
+            result = _run_script(
+                _BATCH_SCRIPT,
+                {
+                    "pcb": str(staging),
+                    "operations": operations,
+                    "dry_run": bool(dry_run),
+                    "refill": bool(refill),
+                },
+                timeout=timeout,
+            )
+            if not result.get("ok"):
+                return {
+                    "ok": False,
+                    "dry_run": bool(dry_run),
+                    "result": result.get("result") or result,
+                    "revision": paths.file_revision(pcb),
+                }
+            parsed = result.get("result") or {}
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "result": parsed,
+                    "revision": paths.file_revision(pcb),
+                }
+            commit = paths.commit_staged(
+                staging,
+                pcb,
+                backup=backup,
+                expected_revision=expected_revision,
+            )
+            return {
+                "ok": True,
+                "dry_run": False,
+                "result": parsed,
+                "backup": commit.get("backup"),
+                "revision": commit.get("revision"),
+            }
+        finally:
             try:
-                tmp_copy.unlink()
+                staging.unlink()
             except OSError:
                 pass
 
 
-def _backup(pcb: Path) -> str | None:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bak = pcb.with_name(f"{pcb.name}.{stamp}_pre_edit.bak")
-    shutil.copy2(pcb, bak)
-    return str(bak)
+def pcb_revision(pcb_path: str | Path) -> dict:
+    pcb = _require_pcb(pcb_path)
+    return paths.file_revision(pcb)
+
+
+def set_pad_net(
+    pcb_path: str | Path,
+    ref: str,
+    pad: str,
+    net: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [{"kind": "set_pad_net", "ref": ref, "pad": str(pad), "net": net}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def set_footprint_value(
+    pcb_path: str | Path,
+    ref: str,
+    value: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [{"kind": "set_footprint_value", "ref": ref, "value": value}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def replace_footprint(
+    pcb_path: str | Path,
+    ref: str,
+    footprint: str,
+    keep_value: bool = True,
+    transfer_nets: bool = True,
+    value: str | None = None,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    resolved = resolve_footprint(footprint)
+    operation = {
+        "kind": "replace_footprint",
+        "ref": ref,
+        "keep_value": bool(keep_value),
+        "transfer_nets": bool(transfer_nets),
+        **resolved,
+    }
+    if value is not None:
+        operation["value"] = value
+    return pcb_batch(
+        pcb_path,
+        [operation],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def place_footprint(
+    pcb_path: str | Path,
+    footprint: str,
+    reference: str,
+    value: str,
+    x_mm: float,
+    y_mm: float,
+    layer: str = "F.Cu",
+    rotation: float = 0.0,
+    pad_nets: dict | None = None,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    resolved = resolve_footprint(footprint)
+    operation = {
+        "kind": "place_footprint",
+        "reference": reference,
+        "value": value,
+        "x": float(x_mm),
+        "y": float(y_mm),
+        "layer": layer,
+        "rotation": float(rotation),
+        "pad_nets": pad_nets or {},
+        **resolved,
+    }
+    return pcb_batch(
+        pcb_path,
+        [operation],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def set_zone_connection(
+    pcb_path: str | Path,
+    mode: str,
+    ref: str | None = None,
+    pad: str | None = None,
+    zone_index: int | None = None,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    if ref is not None and pad is not None:
+        operation = {
+            "kind": "set_zone_connection",
+            "target": "pad",
+            "ref": ref,
+            "pad": str(pad),
+            "mode": mode,
+        }
+    elif zone_index is not None:
+        operation = {
+            "kind": "set_zone_connection",
+            "target": "zone",
+            "zone_index": int(zone_index),
+            "mode": mode,
+        }
+    else:
+        raise ValueError("set_zone_connection needs ref+pad or zone_index")
+    return pcb_batch(
+        pcb_path,
+        [operation],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def add_zone(
+    pcb_path: str | Path,
+    net: str,
+    layers: list[str],
+    points: list[list[float]],
+    priority: int = 0,
+    clearance: float = 0.2,
+    min_thickness: float = 0.25,
+    fill_mode: str = "polygons",
+    pad_connection: str = "thermal",
+    island_removal: str = "always",
+    min_island_area_mm2: float = 1.0,
+    refill: bool = True,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [
+            {
+                "kind": "add_zone",
+                "net": net,
+                "layers": layers,
+                "points": points,
+                "priority": priority,
+                "clearance": clearance,
+                "min_thickness": min_thickness,
+                "fill_mode": fill_mode,
+                "pad_connection": pad_connection,
+                "island_removal": island_removal,
+                "min_island_area_mm2": min_island_area_mm2,
+            }
+        ],
+        refill=refill,
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def add_keepout(
+    pcb_path: str | Path,
+    layers: list[str],
+    points: list[list[float]],
+    tracks: bool = True,
+    vias: bool = True,
+    pads: bool = True,
+    zone_fills: bool = True,
+    footprints: bool = False,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [
+            {
+                "kind": "add_keepout",
+                "layers": layers,
+                "points": points,
+                "tracks": tracks,
+                "vias": vias,
+                "pads": pads,
+                "zone_fills": zone_fills,
+                "footprints": footprints,
+            }
+        ],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def set_zone_priority(
+    pcb_path: str | Path,
+    zone_index: int,
+    priority: int,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [{"kind": "set_zone_priority", "zone_index": int(zone_index), "priority": int(priority)}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def remove_islands(
+    pcb_path: str | Path,
+    net: str | None = None,
+    mode: str = "always",
+    min_area_mm2: float = 1.0,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [
+            {
+                "kind": "remove_islands",
+                "net": net,
+                "mode": mode,
+                "min_area_mm2": min_area_mm2,
+            }
+        ],
+        refill=True,
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def delete_zone(
+    pcb_path: str | Path,
+    zone_index: int,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [{"kind": "delete_zone", "zone_index": int(zone_index)}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
 
 
 def add_tracks(pcb_path: str | Path, points: list, layer: str, width: float, net: str,
@@ -1102,24 +1756,39 @@ def edit_begin(pcb_path: str | Path) -> dict:
     return {"source": str(pcb), "staging": str(staging)}
 
 
-def edit_commit(staging_path: str | Path, target_path: str | Path | None = None) -> dict:
-    """Copy an edited staging PCB back over its source file (recorded by edit_begin) or an explicit target_path. Overwrites the target; removes the staging copy."""
-    staging = Path(staging_path).expanduser().resolve()
+def edit_commit(
+    staging_path: str | Path,
+    target_path: str | Path | None = None,
+    backup: bool = True,
+    expected_revision: str | None = None,
+) -> dict:
+    """Atomically copy an edited staging PCB over its source (edit_begin) or target."""
+    staging = paths.normalize_path(staging_path)
     if not staging.is_file():
         raise FileNotFoundError(f"staging pcb not found: {staging}")
+    sidecar = staging.with_suffix(staging.suffix + ".src.json")
     if target_path is None:
-        sidecar = staging.with_suffix(staging.suffix + ".src.json")
         if not sidecar.is_file():
             raise ValueError("target_path not given and no edit_begin sidecar found; pass target_path")
-        target = Path(json.loads(sidecar.read_text(encoding="utf-8"))["source"])
+        target = paths.normalize_path(json.loads(sidecar.read_text(encoding="utf-8"))["source"])
     else:
-        target = Path(target_path).expanduser().resolve()
+        target = paths.normalize_path(target_path)
     if not target.is_file():
         raise FileNotFoundError(f"target pcb not found: {target}")
-    shutil.copy2(staging, target)
+    commit = paths.commit_staged(
+        staging,
+        target,
+        backup=backup,
+        expected_revision=expected_revision,
+    )
     try:
-        staging.unlink()
-        staging.with_suffix(staging.suffix + ".src.json").unlink()
+        sidecar.unlink()
     except OSError:
         pass
-    return {"committed": True, "target": str(target), "staging_removed": True}
+    return {
+        "committed": True,
+        "target": str(target),
+        "backup": commit.get("backup"),
+        "revision": commit.get("revision"),
+        "staging_removed": True,
+    }

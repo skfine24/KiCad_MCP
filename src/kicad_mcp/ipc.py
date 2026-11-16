@@ -440,6 +440,123 @@ def add_via(x_mm: float, y_mm: float, net: str, diameter_mm: float = 0.6,
     }
 
 
+def batch(
+    operations: list[dict],
+    dry_run: bool = False,
+    message: str = "kicad-mcp batch",
+    timeout_seconds: float = 10.0,
+) -> dict:
+    """Apply IPC operations inside one commit (one KiCad undo step).
+
+    Supported kinds: add_tracks, add_via, delete_items, set_pad_net,
+    set_footprint_value. dry_run opens and drops the commit without
+    touching the board.
+    """
+    from kipy.board_types import Net, Track, Via
+    from kipy.geometry import Vector2
+    from kipy.proto.common.types import KIID
+
+    kicad = _connect(timeout_seconds)
+    board = _require_board(kicad)
+    commit = board.begin_commit()
+    results = []
+    try:
+        for operation in operations:
+            kind = operation.get("kind")
+            if kind == "add_tracks":
+                layer = board.get_layer_by_name(operation["layer"])
+                net = Net(name=operation["net"])
+                items = []
+                for index in range(len(operation["points"]) - 1):
+                    track = Track()
+                    track.start = Vector2.from_xy_mm(
+                        float(operation["points"][index][0]),
+                        float(operation["points"][index][1]),
+                    )
+                    track.end = Vector2.from_xy_mm(
+                        float(operation["points"][index + 1][0]),
+                        float(operation["points"][index + 1][1]),
+                    )
+                    track.width = int(round(float(operation["width"]) * 1e6))
+                    track.layer = layer
+                    track.net = net
+                    items.append(track)
+                created = board.create_items(items)
+                results.append(
+                    {"kind": kind, "ok": True, "ids": [item.id.value for item in created]}
+                )
+            elif kind == "add_via":
+                via = Via()
+                via.position = Vector2.from_xy_mm(
+                    float(operation["x"]), float(operation["y"])
+                )
+                via.diameter = int(round(float(operation.get("diameter", 0.6)) * 1e6))
+                via.drill_diameter = int(round(float(operation.get("drill", 0.3)) * 1e6))
+                via.net = Net(name=operation["net"])
+                created = board.create_items([via])
+                results.append(
+                    {"kind": kind, "ok": True, "ids": [item.id.value for item in created]}
+                )
+            elif kind == "delete_items":
+                ids = [KIID(value=item_id) for item_id in operation["ids"]]
+                board.remove_items_by_id(ids)
+                results.append({"kind": kind, "ok": True, "removed": len(ids)})
+            elif kind == "set_pad_net":
+                ref = operation["ref"]
+                pad_number = str(operation["pad"])
+                net_name = operation["net"]
+                updated = False
+                for footprint in board.get_footprints():
+                    if footprint.reference_field.text.value != ref:
+                        continue
+                    for pad in footprint.definition.pads:
+                        if pad.number == pad_number:
+                            pad.net = Net(name=net_name)
+                            board.update_items([pad])
+                            updated = True
+                            break
+                    if updated:
+                        break
+                if not updated:
+                    raise ValueError(f"pad not found: {ref}.{pad_number}")
+                results.append(
+                    {"kind": kind, "ok": True, "ref": ref, "pad": pad_number, "net": net_name}
+                )
+            elif kind == "set_footprint_value":
+                ref = operation["ref"]
+                value = str(operation["value"])
+                updated = False
+                for footprint in board.get_footprints():
+                    if footprint.reference_field.text.value != ref:
+                        continue
+                    footprint.value_field.text.value = value
+                    board.update_items([footprint])
+                    updated = True
+                    break
+                if not updated:
+                    raise ValueError(f"footprint not found: {ref}")
+                results.append({"kind": kind, "ok": True, "ref": ref, "value": value})
+            else:
+                raise ValueError(f"unknown IPC batch operation: {kind}")
+        if dry_run:
+            board.drop_commit(commit)
+            return {"ok": True, "dry_run": True, "committed": False, "operations": results}
+        board.push_commit(commit, message)
+        return {"ok": True, "dry_run": False, "committed": True, "operations": results}
+    except Exception as exc:
+        try:
+            board.drop_commit(commit)
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "dry_run": bool(dry_run),
+            "committed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "operations": results,
+        }
+
+
 def delete_items(ids: list[str], timeout_seconds: float = 5.0) -> dict:
     from kipy.proto.common.types import KIID
 
@@ -461,6 +578,51 @@ def refill_zones_live(timeout_seconds: float = 30.0) -> dict:
     board = _require_board(kicad)
     board.refill_zones(block=True, max_poll_seconds=timeout_seconds)
     return {"refilled": True, "board": board.name}
+
+
+def get_schematic(timeout_seconds: float = 3.0) -> dict:
+    """Live schematic summary from the open KiCad GUI (IPC).
+
+    kicad-python 0.8.x does not expose the KiCad 11 Schematic wrapper, so the
+    document identity is always returned and item counts are best-effort.
+    """
+    from kipy.proto.common.types import DocumentType
+
+    kicad = _connect(timeout_seconds)
+    docs = kicad.get_open_documents(DocumentType.DOCTYPE_SCHEMATIC)
+    if not docs:
+        raise RuntimeError("no schematic document is open in KiCad")
+    doc = docs[0]
+    result = {
+        "project": doc.project.name,
+        "path": doc.project.path,
+        "sheet_path": doc.sheet_path,
+        "title_block": None,
+        "counts": None,
+    }
+    try:
+        from kipy.schematic import Schematic
+
+        schematic = Schematic(kicad._client, doc)
+        title_block = schematic.get_title_block()
+        result["title_block"] = {
+            "title": title_block.title,
+            "date": title_block.date,
+            "revision": title_block.revision,
+            "company": title_block.company,
+        }
+        result["counts"] = {
+            "symbols": len(schematic.get_symbols()),
+            "labels": len(schematic.get_labels()),
+            "sheets": len(schematic.get_sheet_symbols()),
+            "hierarchy": len(schematic.get_hierarchy()),
+        }
+    except Exception as exc:
+        result["note"] = (
+            "live schematic item counts unavailable with this kicad-python: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    return result
 
 
 def set_active_layer(layer_name: str, timeout_seconds: float = 3.0) -> dict:

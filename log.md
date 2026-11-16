@@ -1,3 +1,112 @@
+# 2026-11-16: KiCad MCP server v0.6.0 (fresh nets, structured checks, transactional editing)
+
+## Summary
+
+Upgraded the v0.5.2 server to v0.6.0 with the improvements requested from the
+airgo_gate session:
+
+- Fresh netlist export by default for `list_nets`/`trace_net`, with `refresh`,
+  `expected_revision`, source/netlist mtime and SHA-256 metadata.
+- KiCad 10 `get_board_info` net parsing (pad-level `(net "name")`), board
+  thickness, stackup, netclasses, unconnected pads and optional schematic-net
+  merge.
+- Structured, paginated DRC/ERC: deterministic violation IDs, severity/type/net,
+  item UUID/position/net, summaries by severity/type/net, report SHA-256.
+- Transactional PCB editing: `pcb_batch` (single pcbnew process, dry-run,
+  rollback, expected revision, local staging + atomic save), plus
+  `set_pad_net`, `set_footprint_value`, `replace_footprint`, `place_footprint`,
+  `set_zone_connection`, `add_zone`, `add_keepout`, `set_zone_priority`,
+  `remove_islands`, `delete_zone`.
+- Schematic text editing: `sch_add_wire`, `sch_add_label`,
+  `sch_add_no_connect`, `sch_set_value`, `sch_set_property`, `sch_add_symbol`
+  (flattens `extends` symbols and embeds `lib_symbols`), `sch_delete_item`.
+- Library search: `search_symbols`, `search_footprints`, `get_pinout`,
+  `get_footprint_info`, `list_libraries`.
+- Mechanical checks: `mechanical_check`, `check_courtyard`, `check_3d_models`,
+  `board_edge_clearance`.
+- Manufacturing: `export_step`, `export_pdf`, `manufacturing_profile` (standard
+  Gerber layer set, drill report, POS/BOM/STEP/PDF, SHA-256 manifest),
+  `verify_manufacturing_output`.
+- BOM: PWR_FLAG exclusion, `bom_enrich` (MPN/Manufacturer/Supplier/Stock/
+  Alternate + CSV/JSON database merge), `bom_validate_mpn`.
+- Safety/protocol: `doctor`, `self_test`, resources `kicad://board`,
+  `kicad://schematic`, `kicad://schematic-file/{path*}`, `kicad://project/{path*}`,
+  progress reporting, output schemas, `confirm`/`dry_run`, safe mode
+  (`KICAD_MCP_SAFE_MODE=1`), atomic writes and project locks.
+- Live IPC: `ipc_batch` (begin/push/drop commit = one undo step),
+  `ipc_get_schematic`.
+
+## Files Changed
+
+- `src/kicad_mcp/paths.py` (new): path normalization, SHA-256 revisions,
+  atomic writes, local staging, collision-safe backups, project locks.
+- `src/kicad_mcp/sexpr.py`: quoted-token preservation, serializer, walk/clone/
+  remove helpers.
+- `src/kicad_mcp/board_parser.py`: KiCad 10 nets, thickness, stackup,
+  netclasses, Edge.Cuts arcs, unconnected pads, optional schematic net merge.
+- `src/kicad_mcp/kicad_cli.py`: fresh netlist metadata, structured/paginated
+  DRC/ERC, BOM filtering, standard Gerber profile, drill report, STEP/PDF,
+  revision metadata.
+- `src/kicad_mcp/pcb_edit.py`: local staging for every pcbnew run, transactional
+  `pcb_batch`, pad/footprint/value/net/zone/keepout operations, GC-safe
+  keep-alive for SWIG objects.
+- `src/kicad_mcp/ipc.py`: live schematic summary, transactional IPC batch.
+- `src/kicad_mcp/sch_edit.py` (new): schematic text editing with backup,
+  atomic write and re-parse validation.
+- `src/kicad_mcp/library.py` (new): symbol/footprint index, search, pinout,
+  footprint info and `extends` flattening.
+- `src/kicad_mcp/mechanical.py` (new): courtyard, 3D model and edge-clearance
+  checks.
+- `src/kicad_mcp/manufacturing.py` (new): manufacturing profile + manifest
+  verification.
+- `src/kicad_mcp/bom.py` (new): BOM enrichment and MPN validation.
+- `src/kicad_mcp/diagnostics.py` (new): doctor + self test.
+- `src/kicad_mcp/server.py`: 77 tools, annotations, output schemas, resources,
+  progress, confirm/dry-run, revision guards.
+- `tests/test_core.py` (new): 13 pytest checks.
+- `tests/stdio_test.py`: expected tool set (77 tools).
+- `pyproject.toml`, `README.md`, `log.md`: version 0.6.0 and docs.
+
+## Reason
+
+The v0.5.2 server returned stale netlists (`A1.34` unconnected instead of
+`BUZZER_DRIVE`, `A1.15` missing `TTP_OUT_3V3`), reported `nets: []` for KiCad 10
+boards, truncated large DRC output, and required one-off pcbnew/schematic text
+scripts for pad nets, zones, symbols and library placement.
+
+## Root Cause
+
+1. `list_nets`/`trace_net` only exported when the netlist file was missing.
+2. `board_parser` assumed the KiCad 7-9 root `(net N "name")` table; KiCad 10
+   stores `(net "name")` on pads/tracks/vias/zones.
+3. DRC/ERC returned an unbounded list with no summary/filter/page metadata.
+4. PCB edits loaded and saved directly on the target path; pcbnew SaveBoard
+   crashed on Korean UNC paths (`0xC0000005`) and each operation was a separate
+   save.
+5. No schematic/library/zone/mechanical/manufacturing/BOM enrichment tools.
+
+## Validation
+
+- `tests/test_core.py`: 13/13 passed (sexpr, board parser, netlist freshness,
+  DRC pagination, PCB batch dry-run/edit, pad/zone dry-run, schematic edit +
+  netlist export, library search/pinout, mechanical, manufacturing + manifest
+  verify, BOM enrich/validate, paths/revision/backup/lock, doctor).
+- `tests/integration_test.py`: 19/19 passed.
+- `tests/stdio_test.py`: 77 tools; protocol calls passed; resources listed.
+- `main_board_v5`: fresh netlist `A1.34=/BUZZER_DRIVE`,
+  `A1.15=/TTP_OUT_3V3`; `get_board_info` 29 PCB named nets + 28 unconnected
+  pads, `net_count_all=53` with schematic merge, thickness 1.6 mm, netclass
+  `Default`.
+- `main_board_v5` manufacturing profile: 18 files, all 9 Gerber layers present,
+  PTH/NPTH drill files, manifest verified (18/18 SHA-256).
+- `main_board_v5` BOM: PWR_FLAG removed; enriched BOM reports missing MPNs.
+- DRC parser on the older 344-violation report: 344 violations + 63
+  unconnected, severity/type/net summaries and pagination correct.
+- Mechanical: courtyard/3D/edge checks run; F1 missing 3D model and 5
+  footprints without a model reported.
+- SaveBoard staging: batch dry-run leaves the original unchanged; edit creates a
+  timestamped backup and returns the new revision.
+
 # 2026-11-16: KiCad_MCP deployment (v0.5.2, GitHub + uvx)
 
 ## Summary
