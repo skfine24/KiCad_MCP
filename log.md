@@ -1,3 +1,52 @@
+# 2026-11-16: KiCad_MCP deployment (v0.5.2, GitHub + uvx)
+
+## Summary
+
+Published the project as the public GitHub repository `skfine24/KiCad_MCP`
+(tag `v0.5.2`) and made it installable/runnable through `uvx`. opencode now
+uses the tagged GitHub source instead of the local virtualenv.
+
+## Files Changed
+
+- `.gitignore`, `LICENSE`, `MANIFEST.in` (new)
+- `pyproject.toml`: src layout `package-dir`, README, SPDX MIT license,
+  authors, classifiers, project URLs, dependency bounds, `kicad-mcp` entry point
+- `README.md`: GitHub/uvx install, opencode config, local dev, tests, live IPC
+- `tests/paths.py` (new): copies the KiCad `pic_programmer` demo into a temp dir
+- `tests/integration_test.py`, `tests/stdio_test.py`: portable paths and
+  `sys.executable`
+- `C:\Users\skfin\.config\opencode\opencode.jsonc`: `mcp.kicad.command` ->
+  `uvx --from git+https://github.com/skfine24/KiCad_MCP.git@v0.5.2 kicad-mcp`
+- `log.md`: this entry
+
+## Reason
+
+The project had no git/packaging metadata and opencode was tied to a local
+virtualenv; tests and configuration used machine-specific paths.
+
+## Root Cause
+
+- `pyproject.toml` lacked `package-dir` for the `src/` layout, so a wheel/sdist
+  could not be built reliably.
+- No `.gitignore`/`LICENSE`; dev artifacts (`.venv`, `boards`, `__pycache__`)
+  were in the working tree.
+- Tests hardcoded `C:\Users\...\Temp\opencode\kicad-test` and the local venv
+  Python.
+- opencode `mcp.kicad.command` pointed to the local `.venv` Python.
+
+## Validation
+
+- `uv build` -> `kicad_mcp-0.5.2-py3-none-any.whl` and `.tar.gz`; wheel contains
+  only `kicad_mcp/` + `py.typed` + license/metadata; sdist excludes `boards`,
+  `.venv`, `__pycache__`.
+- Wheel installed in a clean Python 3.12 venv (fastmcp 4.2.0, kicad-python
+  0.8.0); `tests/stdio_test.py` -> 38 tools, protocol calls passed.
+- `tests/integration_test.py` -> 19/19; `tests/stdio_test.py` -> 38 tools
+  (editable install).
+- GitHub repo `skfine24/KiCad_MCP` public; tag `v0.5.2`; `uvx` from the tag ->
+  38 tools (initialize + tools/list).
+- opencode config updated; restart required to load the new command.
+
 # 2026-11-16: KiCad MCP server v0.5.2 (`ipc_open_board` launcher)
 
 ## Summary
