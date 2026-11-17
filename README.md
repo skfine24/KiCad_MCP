@@ -9,7 +9,9 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.8.0** — 91 tools, 4 resources.
+Current release: **v0.8.1** — 91 tools, 4 resources. v0.8.1 is a maintenance
+release (UTF-8 enforcement, dead-code cleanup, standalone parts server removed);
+the feature set is the same as v0.8.0.
 
 ## What's new in v0.8.0
 
@@ -62,7 +64,7 @@ Add this to `~/.config/opencode/opencode.jsonc`:
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/skfine24/KiCad_MCP.git@v0.8.0",
+        "git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1",
         "kicad-mcp"
       ],
       "enabled": true
@@ -73,22 +75,22 @@ Add this to `~/.config/opencode/opencode.jsonc`:
 
 Restart opencode. `uvx` builds the package from the tagged GitHub source and
 caches the environment; no local clone or virtualenv is required. Use `@main`
-instead of `@v0.8.0` to track the latest commits.
+instead of `@v0.8.1` to track the latest commits.
 
-If you previously had a separate `parts` MCP entry, remove it — v0.8.0 replaces
+If you previously had a separate `parts` MCP entry, remove it — v0.8.1 replaces
 it.
 
 ### Install as a tool
 
 ```powershell
-uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.8.0
+uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1
 kicad-mcp
 ```
 
 ### pip
 
 ```powershell
-pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.8.0"
+pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1"
 ```
 
 ### Local development
@@ -232,6 +234,7 @@ requires the credential file above.
 
 | Version | Change |
 |---|---|
+| 0.8.1 | Maintenance: UTF-8 enforcement, dead-code cleanup, standalone parts server removed |
 | 0.8.0 | Vendor part search + BOM purchase lists + DeviceMart cart merged in (14 tools) |
 | 0.7.0 | Version bump only (release marker for the DigiKey BOM workflow) |
 | 0.6.0 | Fresh netlists, structured DRC/ERC, transactional PCB/schematic editing, library/mechanical/manufacturing/BOM tools |

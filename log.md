@@ -1,3 +1,31 @@
+# 2026-11-17: KiCad MCP server v0.8.1 (maintenance)
+
+## Summary
+
+Bumped the package from 0.8.0 to 0.8.1 so the published tag includes the
+cleanup commit (UTF-8 enforcement, dead-code removal, standalone parts server
+removed). No functional changes: same 91 tools and 4 resources as v0.8.0.
+
+## Files Changed
+
+- `pyproject.toml`: version 0.8.1.
+- `src/kicad_mcp/__init__.py`: `__version__` 0.8.1.
+- `README.md`: current release, install snippets and version history updated to
+  0.8.1 (the `kicad-python>=0.8.0` dependency pin is unchanged).
+- `log.md`: this entry.
+
+## Reason
+
+User requested that the UTF-8/cleanup work be part of the deployed tag rather
+than only on `main`.
+
+## Validation
+
+- `pytest -q`: 29 passed (core + parts + UTF-8 guard).
+- `ruff check --select F401,F811,F841`: clean.
+- UTF-8 scan: all repository text files valid UTF-8, no BOM.
+- `tests/stdio_test.py`: 91 tools, protocol checks passed.
+
 # 2026-11-17: v0.8.0 follow-up (UTF-8 enforcement, dead code removal)
 
 ## Summary
