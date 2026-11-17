@@ -65,8 +65,9 @@ Run the server directly over stdio:
 
 ## Tools
 
-v0.6.0 adds fresh-netlist revisions, structured/paginated DRC/ERC, transactional
-PCB batches, schematic text editing, library search, mechanical checks,
+v0.7.0 is the current release and includes the v0.6.0 feature set:
+fresh-netlist revisions, structured/paginated DRC/ERC, transactional PCB
+batches, schematic text editing, library search, mechanical checks,
 manufacturing manifests and BOM enrichment.
 
 | Category | Tools |

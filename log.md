@@ -1,3 +1,33 @@
+# 2026-11-17: KiCad MCP server v0.7.0 (version bump)
+
+## Summary
+
+Bumped the package and runtime version from 0.6.0 to 0.7.0. No functional code
+changes; this release marks the version used for the airgo_gate
+DigiKey-orderable BOM workflow.
+
+## Files Changed
+
+- `pyproject.toml`: version 0.7.0.
+- `src/kicad_mcp/__init__.py`: `__version__` 0.7.0.
+- `README.md`: current release reference 0.7.0.
+- `log.md`: this entry.
+
+## Reason
+
+User requested the KiCad MCP server be updated to 0.7.0 and pushed to Git.
+
+## Root Cause / Gap
+
+The package and runtime version were 0.6.0.
+
+## Validation
+
+- `uv run --with pytest pytest -q`: 13 passed.
+- Version strings: `pyproject.toml`, `src/kicad_mcp/__init__.py`, `README.md` = 0.7.0.
+- NOT verified: new functional behavior (none added); live MCP reload requires an
+  opencode restart after the Git tag/config update.
+
 # 2026-11-16: KiCad MCP server v0.6.0 (fresh nets, structured checks, transactional editing)
 
 ## Summary
