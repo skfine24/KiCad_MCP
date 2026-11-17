@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -74,13 +73,6 @@ def _to_int(value: Any) -> int | None:
             return int(float(value))
         except (TypeError, ValueError):
             return None
-
-
-def _clean(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    return text or None
 
 
 def _normalize_variation(variation: dict[str, Any]) -> dict[str, Any]:

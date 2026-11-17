@@ -370,7 +370,6 @@ def _netlist_for(sch: Path, refresh: bool = True, expected_revision: str | None 
     netlist_path = sch.parent / f"{sch.stem}-netlist.net"
     meta_path = netlist_path.with_name(netlist_path.name + ".meta.json")
     source_rev = paths.file_revision(sch)
-    netlist_rev = paths.file_revision(netlist_path)
     stale = False
     if netlist_path.is_file():
         stale = netlist_path.stat().st_mtime_ns < sch.stat().st_mtime_ns

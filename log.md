@@ -1,3 +1,37 @@
+# 2026-11-17: v0.8.0 follow-up (UTF-8 enforcement, dead code removal)
+
+## Summary
+
+Enforced UTF-8 (no BOM) for every source, test and documentation file, removed
+code left over from the parts-purchase merge and pre-existing unused code, and
+deleted the now-redundant standalone `parts-purchase` server.
+
+## Files Changed
+
+- `.editorconfig` (new): `charset = utf-8`, final newline, 4-space Python indent.
+- `tests/test_encoding.py` (new): fails if any `src/`/`tests/` file, `README.md`,
+  `log.md` or `pyproject.toml` is not valid UTF-8 or has a BOM.
+- `src/kicad_mcp/server.py`: dropped the unused `netlist_rev` assignment.
+- `src/kicad_mcp/pcb_edit.py`: removed unused `os` and `datetime` imports.
+- `src/kicad_mcp/parts/sites/digikey.py`: removed the unused `_clean` helper and
+  the now-unused `re` import.
+- `tests/test_core.py`: removed an unused `fp` assignment.
+- `README.md`: documented the UTF-8 rule and updated the test count (29).
+- `DEV_APP/MCP/parts-purchase/`: deleted (code lives in `kicad_mcp.parts` and in
+  this repository's history; credentials and cart cookies remain under
+  `~/.config/opencode/parts-purchase/`).
+
+## Reason
+
+User requirement: all code must be UTF-8 and unnecessary code must be removed.
+
+## Validation
+
+- `pytest -q`: 29 passed (includes the new encoding guard).
+- `ruff check --select F401,F811,F841`: clean.
+- UTF-8 scan of all 48 repo text files: valid UTF-8, no BOM.
+- `tests/stdio_test.py`: 91 tools, protocol checks passed.
+
 # 2026-11-17: KiCad MCP server v0.8.0 (vendor part search merged in)
 
 ## Summary

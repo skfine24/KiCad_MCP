@@ -106,6 +106,10 @@ non-ASCII characters can make Python fail while reading the generated `.pth`
 file (`UnicodeDecodeError: 'cp949' codec ...`). Clone to a local ASCII path for
 development; the `uvx` install is unaffected because it builds a wheel.
 
+Source encoding: all source, test and documentation files are UTF-8 without BOM.
+`.editorconfig` sets `charset = utf-8`, and `tests/test_encoding.py` fails the
+suite if any file is not valid UTF-8.
+
 ## Vendor part search setup
 
 DigiKey credentials are read from
@@ -198,7 +202,7 @@ not launch a second editor; open the board manually in that case.
 ## Tests
 
 ```powershell
-uv run --with pytest pytest -q            # 28 unit tests (core + vendor parsers)
+uv run --with pytest pytest -q            # 29 unit tests (core + vendor parsers + UTF-8 guard)
 python tests/integration_test.py          # 19 tool-level checks against a real KiCad demo project
 python tests/stdio_test.py                # MCP stdio handshake, tools/list (91), sample calls
 python tests/smoke_live_parts.py          # live read-only DigiKey/IC Mart/DeviceMart smoke test

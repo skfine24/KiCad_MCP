@@ -11,12 +11,10 @@ Always pass an explicit layer for vias (t.GetWidth(pcbnew.F_Cu)).
 """
 
 import json
-import os
 import shutil
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from . import kicad_cli, paths

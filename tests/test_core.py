@@ -116,7 +116,6 @@ def test_pad_net_and_zone_tools():
     pcb = _copy_pcb("zone.kicad_pcb")
     data = board_parser.read_board(pcb)
     ref = data["footprints"][0]["reference"]
-    fp = next(fp for fp in data["footprints"] if fp["reference"] == ref)
     pad = None
     for candidate in board_parser.sexpr.get_all(board_parser.sexpr.load_file(pcb), "footprint"):
         if board_parser._footprint_reference(candidate) == ref:
