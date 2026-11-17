@@ -5,7 +5,10 @@ from pathlib import Path
 from fastmcp import Context, FastMCP
 from fastmcp.resources import ResourceSecurity
 
-from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, paths, pcb_edit, sch_edit, sch_parser
+from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser
+from .parts import purchase
+from .parts.http import RateLimitedSession
+from .parts.sites import devicemart, digikey, icmart
 
 mcp = FastMCP("kicad")
 
@@ -21,6 +24,8 @@ WRITE = {
     "idempotentHint": False,
     "openWorldHint": False,
 }
+READ_ONLY_NET = {**READ_ONLY, "openWorldHint": True}
+WRITE_NET = {**WRITE, "openWorldHint": True}
 
 
 def _object_schema(properties: dict) -> dict:
@@ -58,6 +63,20 @@ def _require_confirm(confirm: bool, action: str) -> None:
         raise RuntimeError(
             f"{action} requires confirm=True because KICAD_MCP_SAFE_MODE is enabled"
         )
+
+
+# Vendor part search sessions. No network request happens until a tool is called;
+# the DeviceMart guest cart survives restarts via the persisted cookie file.
+_IC_SESSION: RateLimitedSession = icmart.make_session()
+_DM_SESSION: RateLimitedSession = devicemart.make_session(parts.state_dir())
+_DK_SESSION = digikey.make_session()
+
+
+def _safe(call, *args, **kwargs) -> dict:
+    try:
+        return call(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
 
 
 @mcp.tool
@@ -1326,6 +1345,204 @@ def ipc_refill_zones(timeout_seconds: float = 30.0) -> dict:
 def ipc_set_active_layer(layer_name: str, timeout_seconds: float = 3.0) -> dict:
     """Set the active layer of the open KiCad board via IPC (for example 'F.Cu')."""
     return ipc.set_active_layer(layer_name, timeout_seconds)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def search_parts(query: str, site: str = "digikey", limit: int = 10) -> dict:
+    """Search vendor sites for parts; site is 'digikey', 'icmart', 'devicemart', 'both', or 'all'.
+
+    DigiKey Korea (default) returns KRW price, stock, MOQ/order multiple and the
+    exact DigiKey product number. 'both' searches IC Mart + DeviceMart; 'all'
+    searches every site and tolerates a failing site.
+    """
+    site = site.lower().strip()
+    if site == "digikey":
+        return digikey.search(_DK_SESSION, query, limit)
+    if site == "icmart":
+        return icmart.search(_IC_SESSION, query, limit)
+    if site == "devicemart":
+        return devicemart.search(_DM_SESSION, query, limit)
+    if site == "both":
+        return {
+            "icmart": icmart.search(_IC_SESSION, query, limit),
+            "devicemart": devicemart.search(_DM_SESSION, query, limit),
+        }
+    if site == "all":
+        return {
+            "digikey": _safe(digikey.search, _DK_SESSION, query, limit),
+            "icmart": _safe(icmart.search, _IC_SESSION, query, limit),
+            "devicemart": _safe(devicemart.search, _DM_SESSION, query, limit),
+        }
+    raise ValueError("site must be 'digikey', 'icmart', 'devicemart', 'both', or 'all'")
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def search_digikey(query: str, limit: int = 10, offset: int = 0) -> dict:
+    """Search DigiKey Korea for orderable parts with KRW price and stock."""
+    return digikey.search(_DK_SESSION, query, limit, offset)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def search_icmart(query: str, limit: int = 20) -> dict:
+    """Search IC Mart for parts. Returns product name, code, price, and URL."""
+    return icmart.search(_IC_SESSION, query, limit)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def search_devicemart(query: str, limit: int = 10, include_external: bool = False) -> dict:
+    """Search DeviceMart. Returns internal products; optionally external distributor results."""
+    return devicemart.search(_DM_SESSION, query, limit, include_external)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_part(product_id: str, site: str = "digikey") -> dict:
+    """Get vendor product details by site and product id, MPN, or URL. DigiKey is the default."""
+    site = site.lower().strip()
+    if site == "digikey":
+        return digikey.product(_DK_SESSION, product_id)
+    if site == "icmart":
+        return icmart.product(_IC_SESSION, product_id)
+    if site == "devicemart":
+        return devicemart.product(_DM_SESSION, product_id)
+    raise ValueError("site must be 'digikey', 'icmart', or 'devicemart'")
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_digikey_product(product_number: str) -> dict:
+    """Get DigiKey product details by MPN, DigiKey product number, or URL (parameters, tiers, lead time)."""
+    return digikey.product(_DK_SESSION, product_number)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_icmart_product(product_id: str) -> dict:
+    """Get IC Mart product details: price, stock, quantity discounts, and inquiry URL."""
+    return icmart.product(_IC_SESSION, product_id)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_devicemart_product(product_no: str) -> dict:
+    """Get DeviceMart product details: price, VAT price, stock, MOQ, and cart form fields."""
+    return devicemart.product(_DM_SESSION, product_no)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def compare_parts(query: str, limit: int = 5) -> dict:
+    """Search DigiKey, IC Mart, and DeviceMart and return side-by-side results."""
+    return {
+        "query": query,
+        "digikey": _safe(digikey.search, _DK_SESSION, query, limit),
+        "icmart": _safe(icmart.search, _IC_SESSION, query, limit),
+        "devicemart": _safe(devicemart.search, _DM_SESSION, query, limit),
+    }
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def bom_purchase_list(
+    items: list[dict],
+    site: str = "digikey",
+    limit: int = 5,
+    include_modules: bool = False,
+) -> dict:
+    """Build a purchase list from BOM items using DigiKey by default.
+
+    Each item may contain name/value/mpn, qty, optional digikey_product_number,
+    digikey_pn, digikey_mpn, icmart_id, and devicemart_no. site is 'digikey',
+    'icmart', 'devicemart', 'both', or 'all'. Returns per-item purchase options
+    with availability, price, stock, URL, and a recommended option. Modules
+    (Pico, VL53L0X/L1X/L5CX, TTP223 module, WS2812B strip) are excluded from the
+    purchase BOM by default; set include_modules=True to include them.
+    """
+    return purchase.build_purchase_list(
+        items,
+        _IC_SESSION,
+        _DM_SESSION,
+        site,
+        limit,
+        include_modules,
+        dk_session=_DK_SESSION,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def check_digikey_bom(items: list[dict], limit: int = 3, include_modules: bool = False) -> dict:
+    """Check that every non-module BOM item has an exact DigiKey MPN and stock.
+
+    Each non-module item must provide mpn, digikey_product_number, digikey_pn,
+    or digikey_mpn. Generic value-only items are rejected so the result cannot
+    claim an exact part is orderable when only a fuzzy search match exists.
+    """
+    missing_mpn: list[str] = []
+    for item in items:
+        if not include_modules and purchase._is_module(item):
+            continue
+        if not (
+            item.get("mpn")
+            or item.get("digikey_product_number")
+            or item.get("digikey_pn")
+            or item.get("digikey_mpn")
+        ):
+            missing_mpn.append(
+                str(item.get("name") or item.get("value") or item.get("part") or "?")
+            )
+    if missing_mpn:
+        return {
+            "all_orderable": False,
+            "missing_mpn": missing_mpn,
+            "summary": {
+                "total_items": len(items),
+                "missing_mpn_items": len(missing_mpn),
+            },
+            "items": [],
+            "excluded": [],
+        }
+
+    result = purchase.build_purchase_list(
+        items,
+        _IC_SESSION,
+        _DM_SESSION,
+        "digikey",
+        limit,
+        include_modules,
+        dk_session=_DK_SESSION,
+    )
+    return {
+        "all_orderable": result["summary"]["unavailable_items"] == 0,
+        "summary": result["summary"],
+        "items": [
+            {
+                "name": item["name"],
+                "qty": item["qty"],
+                "mpn": item.get("mpn"),
+                "available": item["available"],
+                "recommended": item["recommended"],
+                "errors": item["errors"],
+            }
+            for item in result["items"]
+        ],
+        "excluded": result["excluded"],
+    }
+
+
+@mcp.tool(annotations=WRITE_NET)
+def add_to_cart_devicemart(product_no: str, qty: int, confirm: bool = False) -> dict:
+    """Add a DeviceMart product to the guest cart. Requires confirm=True.
+
+    No login is required. Checkout/payment is not performed. The returned cart
+    URL can be opened for manual checkout.
+    """
+    return devicemart.add_to_cart(_DM_SESSION, product_no, qty, confirm)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_devicemart_cart() -> dict:
+    """Read the current DeviceMart guest cart items and count."""
+    return devicemart.cart(_DM_SESSION)
+
+
+@mcp.tool(annotations=WRITE_NET)
+def remove_from_cart_devicemart(cart_option_seq: str, confirm: bool = False) -> dict:
+    """Remove one item from the DeviceMart guest cart. Requires confirm=True."""
+    return devicemart.remove_from_cart(_DM_SESSION, cart_option_seq, confirm)
 
 
 @mcp.resource("kicad://board")

@@ -1,3 +1,71 @@
+# 2026-11-17: KiCad MCP server v0.8.0 (vendor part search merged in)
+
+## Summary
+
+Merged the standalone `parts-purchase` MCP server into this package as
+`kicad_mcp.parts` and exposed 14 new tools on the single `kicad` server:
+DigiKey Korea / IC Mart / DeviceMart search, product lookup, price comparison,
+BOM purchase lists with availability and KRW totals, a strict DigiKey BOM
+check, and DeviceMart guest-cart add/view/remove. The separate `parts` MCP
+process is no longer needed.
+
+## Files Changed
+
+- `pyproject.toml`: version 0.8.0; added `requests>=2.31.0` and
+  `beautifulsoup4>=4.12.0`.
+- `src/kicad_mcp/__init__.py`: `__version__` 0.8.0.
+- `src/kicad_mcp/parts/__init__.py` (new): state-dir helper for guest cookies
+  (`KICAD_MCP_PARTS_STATE_DIR`, default
+  `~/.config/opencode/parts-purchase/state`).
+- `src/kicad_mcp/parts/http.py` (new): rate-limited requests session with
+  optional cookie persistence.
+- `src/kicad_mcp/parts/purchase.py` (new): BOM purchase-list builder (was
+  `parts_mcp/bom.py`).
+- `src/kicad_mcp/parts/sites/{digikey,icmart,devicemart}.py` (new): vendor
+  adapters.
+- `src/kicad_mcp/server.py`: `parts` import, `READ_ONLY_NET`/`WRITE_NET`
+  annotations, lazily-created vendor sessions, `_safe` helper, and 14 tools
+  registered before the resources.
+- `tests/test_parts.py` (new): 15 parser/BOM tests ported from parts-purchase.
+- `tests/smoke_live_parts.py` (new): live read-only vendor smoke test.
+- `README.md`: rewritten for v0.8.0 (installation, part-search setup, full tool
+  list, safety, tests, limits, version history).
+
+## Reason
+
+User requested that the part-search/purchase capability live inside the KiCad
+MCP rather than in a separate server.
+
+## Root Cause / Gap
+
+`kicad-mcp` 0.7.0 had no vendor access: `bom_enrich` merged a local CSV/JSON
+database only. Live search, pricing, stock and carts were implemented in
+`DEV_APP/MCP/parts-purchase` (parts-purchase-mcp 0.1.0), a separate process with
+its own venv and opencode entry.
+
+## Validation
+
+- `uv run --with pytest pytest -q`: 28 passed (13 core + 15 parts).
+- `tests/stdio_test.py`: MCP handshake, `tools/list` = 91 tools, sample calls
+  passed.
+- `tests/smoke_live_parts.py`: live DigiKey (KRW tiers, product NE555S-13),
+  IC Mart and DeviceMart searches passed.
+- DeviceMart guest cookies migrated to
+  `~/.config/opencode/parts-purchase/state/devicemart_cookies.json`.
+- Known issue (pre-existing, environment): editable installs on the non-ASCII
+  network share break `site` while reading `__editable__*.pth`
+  (`UnicodeDecodeError: 'cp949'`); tests were run from a local ASCII copy. The
+  uvx install is unaffected.
+
+## Notes
+
+- `parts-purchase` source and its opencode entry are kept/disabled separately;
+  removing the `parts` entry from `opencode.jsonc` avoids duplicate tools.
+- Cart writes still require `confirm=True`; no checkout/payment automation.
+- DigiKey credentials remain at
+  `~/.config/opencode/parts-purchase/digikey.json` (override:
+  `PARTS_MCP_DIGIKEY_CREDENTIALS`).
+
 # 2026-11-17: KiCad MCP server v0.7.0 (version bump)
 
 ## Summary

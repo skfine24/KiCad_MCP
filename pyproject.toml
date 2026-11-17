@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kicad-mcp"
-version = "0.7.0"
-description = "MCP server for KiCad 10 - fresh netlists, structured DRC/ERC, transactional PCB/schematic editing, library search, mechanical checks, and manufacturing manifests"
+version = "0.8.0"
+description = "MCP server for KiCad 10 - fresh netlists, structured DRC/ERC, transactional PCB/schematic editing, library search, mechanical checks, manufacturing manifests, and vendor part search (DigiKey/IC Mart/DeviceMart)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -23,6 +23,8 @@ classifiers = [
 dependencies = [
     "fastmcp>=2.0.0,<5",
     "kicad-python>=0.8.0,<0.9",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
 ]
 
 [project.optional-dependencies]
