@@ -5,7 +5,7 @@ MCP (Model Context Protocol) server for KiCad 10, built on the official
 design-to-order loop: schematic analysis, netlist connectivity, ERC/DRC
 validation, transactional PCB and schematic editing, library search, mechanical
 and manufacturing checks, live IPC editing of the open board, and **vendor part
-search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart)**.
+search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
@@ -20,9 +20,11 @@ There is no second process and no second opencode entry; part search and BOM
 purchasing are regular tools here.
 
 - **Vendor search**: `search_parts`, `search_digikey`, `search_icmart`,
-  `search_devicemart`, `compare_parts`, `get_part` and per-site product lookups.
+  `search_devicemart`, `search_lcsc`, `search_lcsc_bom`, `compare_parts`,
+  `get_part`, `get_lcsc_part` and per-site product lookups.
   DigiKey Korea returns KRW price tiers, stock, MOQ/order multiple and the exact
-  DigiKey product number (Product Information V4 API).
+  DigiKey product number (Product Information V4 API). LCSC returns the LCSC
+  part number, MPN, brand, package, USD price tiers, stock, and product URL.
 - **BOM purchasing**: `bom_purchase_list` prices BOM items against
   DigiKey/IC Mart/DeviceMart and recommends the cheapest available option;
   `check_digikey_bom` strictly requires an exact MPN or DigiKey product number

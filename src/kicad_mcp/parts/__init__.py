@@ -1,6 +1,6 @@
 """Vendor part search and BOM purchase lists.
 
-Adapters for DigiKey Korea (API), IC Mart and DeviceMart (HTML/SSE), plus
+Adapters for DigiKey Korea (API), IC Mart, DeviceMart, and LCSC (JSON API), plus
 purchase-list building for BOM items. Network access is opt-in: sessions are
 created lazily and only tools that call the adapters perform requests.
 """

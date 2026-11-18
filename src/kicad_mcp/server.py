@@ -8,7 +8,7 @@ from fastmcp.resources import ResourceSecurity
 from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser
 from .parts import purchase
 from .parts.http import RateLimitedSession
-from .parts.sites import devicemart, digikey, icmart
+from .parts.sites import devicemart, digikey, icmart, lcsc
 
 mcp = FastMCP("kicad")
 
@@ -70,6 +70,7 @@ def _require_confirm(confirm: bool, action: str) -> None:
 _IC_SESSION: RateLimitedSession = icmart.make_session()
 _DM_SESSION: RateLimitedSession = devicemart.make_session(parts.state_dir())
 _DK_SESSION = digikey.make_session()
+_LC_SESSION: RateLimitedSession = lcsc.make_session()
 
 
 def _safe(call, *args, **kwargs) -> dict:
@@ -1348,11 +1349,11 @@ def ipc_set_active_layer(layer_name: str, timeout_seconds: float = 3.0) -> dict:
 
 @mcp.tool(annotations=READ_ONLY_NET)
 def search_parts(query: str, site: str = "digikey", limit: int = 10) -> dict:
-    """Search vendor sites for parts; site is 'digikey', 'icmart', 'devicemart', 'both', or 'all'.
+    """Search vendor sites for parts; site is 'digikey', 'icmart', 'devicemart', 'lcsc', 'both', or 'all'.
 
     DigiKey Korea (default) returns KRW price, stock, MOQ/order multiple and the
     exact DigiKey product number. 'both' searches IC Mart + DeviceMart; 'all'
-    searches every site and tolerates a failing site.
+    searches every site (including LCSC) and tolerates a failing site.
     """
     site = site.lower().strip()
     if site == "digikey":
@@ -1361,6 +1362,8 @@ def search_parts(query: str, site: str = "digikey", limit: int = 10) -> dict:
         return icmart.search(_IC_SESSION, query, limit)
     if site == "devicemart":
         return devicemart.search(_DM_SESSION, query, limit)
+    if site == "lcsc":
+        return lcsc.search(_LC_SESSION, query, limit)
     if site == "both":
         return {
             "icmart": icmart.search(_IC_SESSION, query, limit),
@@ -1371,8 +1374,11 @@ def search_parts(query: str, site: str = "digikey", limit: int = 10) -> dict:
             "digikey": _safe(digikey.search, _DK_SESSION, query, limit),
             "icmart": _safe(icmart.search, _IC_SESSION, query, limit),
             "devicemart": _safe(devicemart.search, _DM_SESSION, query, limit),
+            "lcsc": _safe(lcsc.search, _LC_SESSION, query, limit),
         }
-    raise ValueError("site must be 'digikey', 'icmart', 'devicemart', 'both', or 'all'")
+    raise ValueError(
+        "site must be 'digikey', 'icmart', 'devicemart', 'lcsc', 'both', or 'all'"
+    )
 
 
 @mcp.tool(annotations=READ_ONLY_NET)
@@ -1394,6 +1400,29 @@ def search_devicemart(query: str, limit: int = 10, include_external: bool = Fals
 
 
 @mcp.tool(annotations=READ_ONLY_NET)
+def search_lcsc(query: str, limit: int = 20, page: int = 1) -> dict:
+    """Search LCSC for parts. Returns LCSC part number, MPN, brand, package, USD price tiers, stock, and URL.
+
+    The query can be a keyword (e.g. 'ESP32-S3-WROOM-1U'), a value/package
+    ('100nF 0805'), or an LCSC part number ('C3013946'). The public LCSC search
+    API works without login.
+    """
+    return lcsc.search(_LC_SESSION, query, limit, page)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def search_lcsc_bom(items: list[dict], limit: int = 3) -> dict:
+    """Search LCSC for every BOM item and return candidate matches with USD price, stock, and URL.
+
+    Each item may contain name/value/mpn/package/qty and an optional lcsc_code
+    (or lcsc/lcsc_part_number). With lcsc_code the exact product is fetched;
+    otherwise the MPN or name/value is searched. The recommended candidate is
+    the first one with enough stock for the BOM quantity.
+    """
+    return lcsc.bom_search(_LC_SESSION, items, limit)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
 def get_part(product_id: str, site: str = "digikey") -> dict:
     """Get vendor product details by site and product id, MPN, or URL. DigiKey is the default."""
     site = site.lower().strip()
@@ -1403,7 +1432,9 @@ def get_part(product_id: str, site: str = "digikey") -> dict:
         return icmart.product(_IC_SESSION, product_id)
     if site == "devicemart":
         return devicemart.product(_DM_SESSION, product_id)
-    raise ValueError("site must be 'digikey', 'icmart', or 'devicemart'")
+    if site == "lcsc":
+        return lcsc.product(_LC_SESSION, product_id)
+    raise ValueError("site must be 'digikey', 'icmart', 'devicemart', or 'lcsc'")
 
 
 @mcp.tool(annotations=READ_ONLY_NET)
@@ -1425,13 +1456,24 @@ def get_devicemart_product(product_no: str) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY_NET)
+def get_lcsc_part(product_code: str) -> dict:
+    """Get LCSC product details by LCSC part number (e.g. 'C3013946') or product URL.
+
+    Returns MPN, manufacturer, package, USD price tiers, stock, MOQ/pack size,
+    parameters, datasheet URL, and images.
+    """
+    return lcsc.product(_LC_SESSION, product_code)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
 def compare_parts(query: str, limit: int = 5) -> dict:
-    """Search DigiKey, IC Mart, and DeviceMart and return side-by-side results."""
+    """Search DigiKey, IC Mart, DeviceMart, and LCSC and return side-by-side results."""
     return {
         "query": query,
         "digikey": _safe(digikey.search, _DK_SESSION, query, limit),
         "icmart": _safe(icmart.search, _IC_SESSION, query, limit),
         "devicemart": _safe(devicemart.search, _DM_SESSION, query, limit),
+        "lcsc": _safe(lcsc.search, _LC_SESSION, query, limit),
     }
 
 
