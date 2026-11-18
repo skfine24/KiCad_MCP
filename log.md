@@ -677,3 +677,36 @@ use it (create project, run ERC/DRC, export manufacturing files).
 - IPC `get_status` fails gracefully (ConnectionError) when KiCad GUI is not
   running; full IPC round-trip still unverified until KiCad GUI is started
   with API server enabled.
+
+## 2026-11-18 - v0.9.0: LCSC orderable-BOM sourcing workflow
+
+### Summary
+- Added `parts/sites/lcsc.py` (LCSC public JSON search/product API).
+- Added `sourcing.py`: reads a schematic, groups components, searches LCSC,
+  classifies orderable/needs_review/low_stock/not_found/not_orderable, and
+  writes LCSC/MPN/Manufacturer/Supplier/Supplier Part/Stock/Datasheet
+  properties back to the schematic in one save.
+- New tools: `search_lcsc`, `search_lcsc_bom`, `get_lcsc_part`,
+  `check_orderable_bom`, `prepare_orderable_bom`, `apply_lcsc_to_schematic`,
+  `apply_lcsc_bom_to_schematic`.
+- LCSC is also available through `search_parts(site="lcsc")`,
+  `get_part(site="lcsc")`, and `compare_parts`.
+- Version bumped to 0.9.0.
+
+### Validation
+- `uv run --with pytest pytest -q`: 37 passed.
+- AIRGO schematic copy + `airgo_jlcpcb_bom.csv`: 61 refs updated; 30/31
+  groups orderable, only AP63203WU-7 (`C780769`) has 0 stock.
+- Fresh AIRGO schematic (no LCSC properties): 20/31 groups auto-matched
+  (48 refs), 10 non-passive generic groups left `needs_review`, 1
+  `not_orderable` (AP63203WU-7).
+- Passive matching verified: 5.1k -> C27834, 47k -> C2930202,
+  330 -> C2933415, 100nF -> C49678, 10uF -> C15850, 22uF -> C602037.
+
+### Files
+- `src/kicad_mcp/parts/sites/lcsc.py` (new)
+- `src/kicad_mcp/sourcing.py` (new)
+- `src/kicad_mcp/sch_edit.py` (`sch_set_properties`)
+- `src/kicad_mcp/server.py` (tools)
+- `tests/test_sourcing.py` (new)
+- `pyproject.toml`, `README.md`
