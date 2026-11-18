@@ -259,6 +259,39 @@ def sch_set_property(
     return result
 
 
+def sch_set_properties(
+    sch_path: str | Path,
+    updates: list[dict],
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Apply property updates to several symbols in one save.
+
+    Each update is ``{"ref": "R1", "properties": {"LCSC": "C25804", ...}}``.
+    The schematic is loaded once, every symbol is updated in the parsed tree,
+    and the file is written once (with a backup by default).
+    """
+    if not isinstance(updates, list) or not updates:
+        raise ValueError("updates must be a non-empty list")
+    sch, tree = _load(sch_path)
+    applied: list[dict] = []
+    for update in updates:
+        ref = str(update.get("ref") or "").strip()
+        if not ref:
+            raise ValueError("each update needs a 'ref'")
+        properties = update.get("properties") or {}
+        if not isinstance(properties, dict) or not properties:
+            raise ValueError(f"update for {ref} needs a non-empty 'properties' dict")
+        symbol = _find_symbol(tree, ref)
+        for name, value in properties.items():
+            _set_property(symbol, str(name), str(value))
+        applied.append({"ref": ref, "properties": sorted(str(name) for name in properties)})
+    result = _save(sch, tree, backup, dry_run, expected_revision)
+    result.update({"updated": len(applied), "updates": applied})
+    return result
+
+
 def sch_add_symbol(
     sch_path: str | Path,
     lib_id: str,

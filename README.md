@@ -9,9 +9,28 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.8.1** — 91 tools, 4 resources. v0.8.1 is a maintenance
-release (UTF-8 enforcement, dead-code cleanup, standalone parts server removed);
-the feature set is the same as v0.8.0.
+Current release: **v0.9.0** — LCSC sourcing workflow. v0.9.0 adds LCSC part
+search and an orderable-BOM workflow that runs after schematic capture and
+before PCB layout.
+
+## What's new in v0.9.0
+
+- **LCSC vendor search**: `search_lcsc`, `search_lcsc_bom`, `get_lcsc_part`.
+  LCSC is also available through `search_parts(site="lcsc")`,
+  `get_part(site="lcsc")`, and `compare_parts`. Results include the LCSC part
+  number, MPN, brand, package, USD price tiers, stock, and product URL.
+- **Orderable-BOM workflow**: `check_orderable_bom` reads a schematic, groups
+  components by value/footprint/MPN/LCSC, searches LCSC, and reports each group
+  as `orderable`, `needs_review`, `low_stock`, `not_found`, or `not_orderable`
+  against the BOM quantity. `prepare_orderable_bom` optionally writes LCSC/MPN/
+  Manufacturer/Supplier/Supplier Part/Stock/Datasheet properties back to the
+  schematic in one save. `strict=True` blocks writes unless every group is
+  exactly orderable; generic-value matches stay `needs_review` unless
+  `allow_generic=True`. `apply_lcsc_to_schematic` sets one symbol from an LCSC
+  code.
+- **Design flow**: run `check_orderable_bom` after schematic capture, resolve
+  any `needs_review`/`low_stock`/`not_found`/`not_orderable` groups, then run
+  `prepare_orderable_bom(apply=True)` so the PCB is built from orderable parts.
 
 ## What's new in v0.8.0
 
@@ -20,11 +39,9 @@ There is no second process and no second opencode entry; part search and BOM
 purchasing are regular tools here.
 
 - **Vendor search**: `search_parts`, `search_digikey`, `search_icmart`,
-  `search_devicemart`, `search_lcsc`, `search_lcsc_bom`, `compare_parts`,
-  `get_part`, `get_lcsc_part` and per-site product lookups.
+  `search_devicemart`, `compare_parts`, `get_part` and per-site product lookups.
   DigiKey Korea returns KRW price tiers, stock, MOQ/order multiple and the exact
-  DigiKey product number (Product Information V4 API). LCSC returns the LCSC
-  part number, MPN, brand, package, USD price tiers, stock, and product URL.
+  DigiKey product number (Product Information V4 API).
 - **BOM purchasing**: `bom_purchase_list` prices BOM items against
   DigiKey/IC Mart/DeviceMart and recommends the cheapest available option;
   `check_digikey_bom` strictly requires an exact MPN or DigiKey product number

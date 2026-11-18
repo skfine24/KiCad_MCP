@@ -78,6 +78,10 @@ def _summary(item: dict[str, Any]) -> dict[str, Any]:
         "price_tiers": tiers,
         "stock": stock,
         "available": bool(stock and stock > 0),
+        "pre_sale": item.get("isPreSale"),
+        "forbid": item.get("isForbid"),
+        "not_overstock": item.get("isNotOverstock"),
+        "product_cycle": item.get("productCycle"),
         "min_qty": _to_int(item.get("minBuyNumber")),
         "pack_qty": _to_int(item.get("minPacketNumber")),
         "pack_unit": item.get("minPacketUnit"),
@@ -106,14 +110,18 @@ def search(
     query: str,
     limit: int = 20,
     page: int = 1,
+    catalog_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit), 100))
     page = max(1, int(page))
-    response = session.post(
-        SEARCH_URL,
-        json={"keyword": query, "currentPage": page, "pageSize": limit},
-        headers=API_HEADERS,
-    )
+    body: dict[str, Any] = {
+        "keyword": query,
+        "currentPage": page,
+        "pageSize": limit,
+    }
+    if catalog_ids:
+        body["catalogIdList"] = [int(catalog_id) for catalog_id in catalog_ids]
+    response = session.post(SEARCH_URL, json=body, headers=API_HEADERS)
     if response.status_code != 200:
         raise RuntimeError(f"LCSC search failed with HTTP {response.status_code}")
     try:

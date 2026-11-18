@@ -5,7 +5,7 @@ from pathlib import Path
 from fastmcp import Context, FastMCP
 from fastmcp.resources import ResourceSecurity
 
-from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser
+from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser, sourcing
 from .parts import purchase
 from .parts.http import RateLimitedSession
 from .parts.sites import devicemart, digikey, icmart, lcsc
@@ -704,6 +704,116 @@ def bom_enrich(
 def bom_validate_mpn(bom_path: str) -> dict:
     """Validate that a BOM has an MPN column with no missing or duplicate MPNs."""
     return bom.bom_validate_mpn(_resolve(bom_path))
+
+
+@mcp.tool(annotations=WRITE_NET)
+def prepare_orderable_bom(
+    schematic_path: str,
+    limit: int = 100,
+    apply: bool = False,
+    strict: bool = False,
+    allow_generic: bool = False,
+    backup: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Search LCSC for every schematic component and optionally write orderable part metadata.
+
+    Reads the schematic, groups components by value/footprint/MPN/LCSC, searches
+    LCSC for each group, and classifies it as orderable, needs_review, low_stock,
+    not_found or not_orderable against the BOM quantity. With apply=True it writes
+    LCSC, MPN, Manufacturer, Supplier, Supplier Part, Stock and Datasheet
+    properties back to every symbol in the group in one save.
+
+    strict=True blocks all writes unless every group is exactly orderable.
+    Generic-value matches stay needs_review; use allow_generic=True to apply them
+    when the selected candidate has enough stock. Use check_orderable_bom for a
+    read-only report.
+    """
+    if apply:
+        _require_confirm(confirm, "prepare_orderable_bom")
+    return sourcing.prepare_orderable_bom(
+        _resolve(schematic_path),
+        limit=limit,
+        apply=apply,
+        strict=strict,
+        allow_generic=allow_generic,
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def check_orderable_bom(schematic_path: str, limit: int = 100) -> dict:
+    """Read-only LCSC sourcing report for a schematic (no schematic writes)."""
+    return sourcing.prepare_orderable_bom(
+        _resolve(schematic_path),
+        limit=limit,
+        apply=False,
+        strict=False,
+        allow_generic=False,
+    )
+
+
+@mcp.tool(annotations=WRITE_NET)
+def apply_lcsc_to_schematic(
+    schematic_path: str,
+    ref: str,
+    lcsc_code: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Set LCSC/MPN/Manufacturer/Supplier/Stock properties for one symbol from an LCSC code."""
+    _require_confirm(confirm, "apply_lcsc_to_schematic")
+    detail = lcsc.product(_LC_SESSION, lcsc_code)
+    properties = {
+        "LCSC": detail.get("code") or lcsc_code,
+        "MPN": detail.get("model") or "",
+        "Manufacturer": detail.get("brand") or "",
+        "Supplier": "LCSC",
+        "Supplier Part": detail.get("code") or lcsc_code,
+        "Stock": str(detail.get("stock") if detail.get("stock") is not None else ""),
+    }
+    if detail.get("pdf_url"):
+        properties["Datasheet"] = detail["pdf_url"]
+    result = sch_edit.sch_set_properties(
+        _resolve(schematic_path),
+        [{"ref": ref, "properties": properties}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+    result.update({"ref": ref, "lcsc": detail.get("code"), "mpn": detail.get("model")})
+    return result
+
+
+@mcp.tool(annotations=WRITE)
+def apply_lcsc_bom_to_schematic(
+    schematic_path: str,
+    bom_path: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Apply LCSC/MPN/Manufacturer metadata from a BOM file to schematic symbols.
+
+    Accepts JLCPCB/LCSC BOM columns (Designator/Refs + LCSC Part #) and the
+    LCSC template where Customer Part Number holds the designators. All matched
+    symbols are updated in one save; unmatched refs are reported in skipped.
+    """
+    _require_confirm(confirm, "apply_lcsc_bom_to_schematic")
+    return sourcing.apply_lcsc_bom_to_schematic(
+        _resolve(schematic_path),
+        _resolve(bom_path),
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
 
 
 @mcp.tool(annotations=WRITE)
