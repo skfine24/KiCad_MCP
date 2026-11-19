@@ -9,9 +9,20 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.9.0** — LCSC sourcing workflow. v0.9.0 adds LCSC part
-search and an orderable-BOM workflow that runs after schematic capture and
-before PCB layout.
+Current release: **v0.9.1** — PCB-side LCSC sourcing. v0.9.1 adds PCB footprint
+annotation/verification and LCSC alternative-part lookup.
+
+## What's new in v0.9.1
+
+- **PCB-side LCSC sourcing**: `apply_lcsc_bom_to_pcb` writes LCSC/MPN/
+  Manufacturer/Supplier/Supplier Part/Stock fields to PCB footprints in one
+  pcbnew batch save; fields are hidden by default so sourcing metadata is not
+  printed on the silkscreen. `check_orderable_pcb_bom` reports the PCB BOM as
+  `orderable`, `needs_review`, `low_stock`, `not_found`, or `not_orderable`.
+- **LCSC alternatives**: `get_lcsc_alternatives` returns LCSC's alternative-part
+  list for a product code (useful for out-of-stock parts such as AP63203WU-7).
+- **MOQ/subtotal metadata**: sourcing reports now include `moq`, `order_qty`,
+  `subtotal`, and currency for each group.
 
 ## What's new in v0.9.0
 

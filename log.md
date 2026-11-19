@@ -710,3 +710,38 @@ use it (create project, run ERC/DRC, export manufacturing files).
 - `src/kicad_mcp/server.py` (tools)
 - `tests/test_sourcing.py` (new)
 - `pyproject.toml`, `README.md`
+
+## 2026-11-19 - v0.9.1: PCB-side LCSC sourcing
+
+### Summary
+- Added `apply_lcsc_bom_to_pcb` (PCB footprint fields LCSC/MPN/Manufacturer/
+  Supplier/Supplier Part/Stock in one pcbnew batch save).
+- Added `check_orderable_pcb_bom` (read-only PCB BOM LCSC sourcing report).
+- Added `get_lcsc_alternatives` (LCSC alternativePart API).
+- Sourcing reports now include MOQ, order quantity, USD subtotal and currency.
+- `board_parser` footprints now expose all properties; `pcb_batch` supports
+  `set_footprint_fields`.
+- Version bumped to 0.9.1.
+
+### Validation
+- `uv run --with pytest pytest -q`: 37 passed (before v0.9.1 tests).
+- PCB field round-trip verified with KiCad pcbnew (`SetField`/`GetFieldText`).
+- LCSC alternatives endpoint verified: C780769 -> C5248536 (AP63203QWU-7,
+  stock 0).
+- BOM MOQ/subtotal logic added; no network tests in pytest.
+
+### Files
+- `src/kicad_mcp/board_parser.py` (properties)
+- `src/kicad_mcp/pcb_edit.py` (`set_footprint_fields`)
+- `src/kicad_mcp/parts/sites/lcsc.py` (`alternatives`, MOQ)
+- `src/kicad_mcp/sourcing.py` (PCB functions)
+- `src/kicad_mcp/server.py` (tools)
+- `pyproject.toml`, `README.md`
+- New footprint fields are hidden by default (`(hide yes)`) so LCSC metadata
+  never prints on the silkscreen; `set_footprint_fields` accepts `visible`.
+- AIRGO PCB annotation: 61/61 refs updated from `airgo_jlcpcb_bom.csv`
+  (backup `airgo_controller.kicad_pcb.20261119_130559_pre_edit.bak`).
+- PCB BOM check: 31/32 groups orderable, subtotal USD 29.49; U3
+  AP63203WU (C780769) still stock 0. DRC unchanged: 0 errors, 1 pre-existing
+  `lib_footprint_mismatch` warning, 0 unconnected.
+- Tests: `uv run --with pytest pytest -q` -> 40 passed.

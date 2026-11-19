@@ -10,6 +10,7 @@ API_BASE = "https://wmsc.lcsc.com"
 SITE_BASE = "https://www.lcsc.com"
 SEARCH_URL = f"{API_BASE}/ftps/wm/product/query/list"
 PRODUCT_URL = f"{API_BASE}/ftps/wm/product/detail"
+ALTERNATE_URL = f"{API_BASE}/ftps/wm/product/alternate/part"
 
 # The public LCSC search API is used by the website itself and works without a
 # login. These headers mirror the browser request (Origin/Referer are required).
@@ -189,6 +190,42 @@ def product(session: RateLimitedSession, product_code: str) -> dict[str, Any]:
     return detail
 
 
+def alternatives(
+    session: RateLimitedSession,
+    product_code: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Return LCSC's alternative-part list for a product code."""
+    code = parse_product_code(product_code)
+    limit = max(1, min(int(limit), 50))
+    response = session.get(
+        ALTERNATE_URL,
+        params={"productCode": code},
+        headers=API_HEADERS,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"LCSC alternatives for {code} failed with HTTP {response.status_code}"
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("LCSC alternatives returned a non-JSON response") from exc
+    if payload.get("code") != 200:
+        raise RuntimeError(
+            f"LCSC alternatives for {code} failed: "
+            f"{payload.get('msg') or payload.get('code')}"
+        )
+    result = payload.get("result") or {}
+    items = [_summary(item) for item in (result.get("dataList") or [])][:limit]
+    return {
+        "site": "lcsc",
+        "product_code": code,
+        "total": _to_int(result.get("totalRow")),
+        "items": items,
+    }
+
+
 def _item_query(item: dict[str, Any]) -> str:
     for key in ("mpn", "name", "value", "part", "description"):
         value = item.get(key)
@@ -241,14 +278,19 @@ def bom_search(
                 errors.append(f"lcsc: {exc}")
 
         for candidate in candidates:
-            unit_price = _price_for_qty(candidate.get("price_tiers"), qty)
-            subtotal = unit_price * qty if unit_price is not None else None
+            moq = candidate.get("min_qty") or 1
+            order_qty = max(qty, moq)
+            unit_price = _price_for_qty(candidate.get("price_tiers"), order_qty)
+            subtotal = unit_price * order_qty if unit_price is not None else None
             candidate["bom_qty"] = qty
-            candidate["order_qty"] = qty
+            candidate["moq"] = moq
+            candidate["order_qty"] = order_qty
+            candidate["pack_qty"] = candidate.get("pack_qty")
+            candidate["pack_unit"] = candidate.get("pack_unit")
             candidate["subtotal"] = subtotal
             candidate["available"] = bool(
                 candidate.get("stock") is not None
-                and candidate["stock"] >= qty
+                and candidate["stock"] >= order_qty
             )
 
         recommended = next(

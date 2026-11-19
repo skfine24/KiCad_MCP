@@ -816,6 +816,42 @@ def apply_lcsc_bom_to_schematic(
     )
 
 
+@mcp.tool(annotations=READ_ONLY_NET)
+def check_orderable_pcb_bom(pcb_path: str, limit: int = 100) -> dict:
+    """Read-only LCSC sourcing report for a PCB (no PCB writes).
+
+    Uses footprint Value/Footprint and optional LCSC/MPN fields; mounting holes
+    and footprints excluded from POS files are skipped.
+    """
+    return sourcing.check_orderable_pcb_bom(_resolve(pcb_path), limit=limit)
+
+
+@mcp.tool(annotations=WRITE)
+def apply_lcsc_bom_to_pcb(
+    pcb_path: str,
+    bom_path: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Apply LCSC/MPN/Manufacturer metadata from a BOM file to PCB footprints.
+
+    Accepts the same BOM columns as apply_lcsc_bom_to_schematic. Each matched
+    footprint gets LCSC, Supplier, Supplier Part and, when present, MPN,
+    Manufacturer and Stock fields. All footprints are updated in one pcbnew
+    batch save.
+    """
+    _require_confirm(confirm, "apply_lcsc_bom_to_pcb")
+    return sourcing.apply_lcsc_bom_to_pcb(
+        _resolve(pcb_path),
+        _resolve(bom_path),
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
 @mcp.tool(annotations=WRITE)
 def manufacturing_profile(
     pcb_path: str,
@@ -1573,6 +1609,12 @@ def get_lcsc_part(product_code: str) -> dict:
     parameters, datasheet URL, and images.
     """
     return lcsc.product(_LC_SESSION, product_code)
+
+
+@mcp.tool(annotations=READ_ONLY_NET)
+def get_lcsc_alternatives(product_code: str, limit: int = 10) -> dict:
+    """Return LCSC's alternative-part list for an LCSC part number or product URL."""
+    return lcsc.alternatives(_LC_SESSION, product_code, limit)
 
 
 @mcp.tool(annotations=READ_ONLY_NET)

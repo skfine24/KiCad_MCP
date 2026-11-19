@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import paths, sch_edit, sexpr
+from . import board_parser, paths, pcb_edit, sch_edit, sexpr
 from .parts.sites import lcsc
 
 _LCSC_PROPERTIES = (
@@ -421,6 +421,91 @@ def _properties_for_candidate(candidate: dict[str, Any]) -> dict[str, str]:
     return properties
 
 
+def _read_pcb_components(pcb_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
+    pcb = paths.normalize_path(pcb_path)
+    if not pcb.is_file():
+        raise FileNotFoundError(f"PCB not found: {pcb}")
+    if pcb.suffix.lower() != ".kicad_pcb":
+        raise ValueError(f"expected .kicad_pcb file, got: {pcb.name}")
+    data = board_parser.read_board(pcb)
+    components: list[dict[str, Any]] = []
+    for footprint in data.get("footprints") or []:
+        ref = (footprint.get("reference") or "").strip()
+        if not ref or ref.startswith("H"):
+            continue
+        if str(footprint.get("exclude_from_pos_files") or "").lower() in ("yes", "true"):
+            continue
+        lib_id = footprint.get("lib_id") or ""
+        components.append(
+            {
+                "reference": ref,
+                "value": (footprint.get("value") or "").strip(),
+                "footprint": lib_id,
+                "lib_id": lib_id,
+                "properties": footprint.get("properties") or {},
+            }
+        )
+    return pcb, components
+
+
+def _price_for_qty(tiers: list[dict[str, Any]] | None, qty: int) -> float | None:
+    price = None
+    for tier in tiers or []:
+        if qty >= (tier.get("min_qty") or 1):
+            price = tier.get("price")
+    return price
+
+
+def _analyze_groups(
+    groups: list[dict[str, Any]],
+    limit: int,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    session = lcsc.make_session()
+    search_limit = max(1, min(int(limit), 100))
+    items: list[dict[str, Any]] = []
+    counts = {
+        "orderable": 0,
+        "needs_review": 0,
+        "low_stock": 0,
+        "not_found": 0,
+        "not_orderable": 0,
+    }
+    for group in groups:
+        qty = len(group["refs"])
+        candidates, error = _search_group(session, group, search_limit)
+        selected, status, note = _select_candidate(candidates, group)
+        moq = selected.get("min_qty") if selected else None
+        order_qty = max(qty, moq or 1)
+        unit_price = _price_for_qty(
+            selected.get("price_tiers") if selected else None,
+            order_qty,
+        )
+        subtotal = unit_price * order_qty if unit_price is not None else None
+        counts[status] = counts.get(status, 0) + 1
+        items.append(
+            {
+                "refs": group["refs"],
+                "qty": qty,
+                "value": group["value"],
+                "footprint": group["footprint"],
+                "package": group["package"],
+                "lib_ids": group["lib_ids"],
+                "query": _query_for_group(group),
+                "status": status,
+                "selected": selected,
+                "alternatives": candidates[:5],
+                "moq": moq,
+                "order_qty": order_qty,
+                "subtotal": subtotal,
+                "currency": "USD" if selected else None,
+                "applied": False,
+                "note": note,
+                "error": error,
+            }
+        )
+    return items, counts
+
+
 def prepare_orderable_bom(
     schematic_path: str | Path,
     limit: int = 100,
@@ -440,54 +525,28 @@ def prepare_orderable_bom(
     """
     sch, components = _read_components(schematic_path)
     groups = _group_components(components)
-    session = lcsc.make_session()
-    search_limit = max(1, min(int(limit), 100))
-    items: list[dict[str, Any]] = []
+    items, counts = _analyze_groups(groups, limit)
     updates: list[dict[str, Any]] = []
-    counts = {
-        "orderable": 0,
-        "needs_review": 0,
-        "low_stock": 0,
-        "not_found": 0,
-        "not_orderable": 0,
-    }
 
-    for group in groups:
-        qty = len(group["refs"])
-        candidates, error = _search_group(session, group, search_limit)
-        selected, status, note = _select_candidate(candidates, group)
-        applied = False
-        if selected is not None and apply:
-            can_apply = status == "orderable" or (
+    if apply:
+        for item in items:
+            selected = item["selected"]
+            if selected is None:
+                continue
+            qty = item["qty"]
+            can_apply = item["status"] == "orderable" or (
                 allow_generic
-                and status == "needs_review"
+                and item["status"] == "needs_review"
                 and selected.get("stock") is not None
                 and selected["stock"] >= qty
             )
             if can_apply:
                 properties = _properties_for_candidate(selected)
                 updates.extend(
-                    {"ref": ref, "properties": properties} for ref in group["refs"]
+                    {"ref": ref, "properties": properties}
+                    for ref in item["refs"]
                 )
-                applied = True
-        counts[status] = counts.get(status, 0) + 1
-        items.append(
-            {
-                "refs": group["refs"],
-                "qty": qty,
-                "value": group["value"],
-                "footprint": group["footprint"],
-                "package": group["package"],
-                "lib_ids": group["lib_ids"],
-                "query": _query_for_group(group),
-                "status": status,
-                "selected": selected,
-                "alternatives": candidates[:5],
-                "applied": applied,
-                "note": note,
-                "error": error,
-            }
-        )
+                item["applied"] = True
 
     all_orderable = counts["orderable"] == len(groups)
     blocked = None
@@ -526,6 +585,35 @@ def prepare_orderable_bom(
             "applied_updates": apply_result.get("updated", 0) if apply_result else 0,
         },
         "apply_result": apply_result,
+        "items": items,
+    }
+
+
+def check_orderable_pcb_bom(
+    pcb_path: str | Path,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Read-only LCSC sourcing report for a PCB (no PCB writes).
+
+    Uses the footprint Value/Footprint and optional LCSC/MPN fields. Mounting
+    holes and footprints excluded from POS files are skipped.
+    """
+    pcb, components = _read_pcb_components(pcb_path)
+    groups = _group_components(components)
+    items, counts = _analyze_groups(groups, limit)
+    all_orderable = counts["orderable"] == len(groups)
+    return {
+        "pcb": str(pcb),
+        "summary": {
+            "components": len(components),
+            "groups": len(groups),
+            "orderable": counts["orderable"],
+            "needs_review": counts["needs_review"],
+            "low_stock": counts["low_stock"],
+            "not_found": counts["not_found"],
+            "not_orderable": counts["not_orderable"],
+            "all_orderable": all_orderable,
+        },
         "items": items,
     }
 
@@ -656,6 +744,135 @@ def apply_lcsc_bom_to_schematic(
         "rows": len(rows),
         "planned_updates": len(updates),
         "updated": result.get("updated", 0) if result else 0,
+        "skipped": skipped,
+        "result": result,
+    }
+
+
+def apply_lcsc_bom_to_pcb(
+    pcb_path: str | Path,
+    bom_path: str | Path,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Copy LCSC/MPN/Manufacturer metadata from a BOM file onto PCB footprints.
+
+    Accepts the same BOM columns as ``apply_lcsc_bom_to_schematic``. Each
+    matched footprint gets LCSC, Supplier, Supplier Part and, when present,
+    MPN, Manufacturer and Stock fields. All footprints are updated in one
+    pcbnew batch save.
+    """
+    pcb, components = _read_pcb_components(pcb_path)
+    known_refs = {component["reference"] for component in components}
+    bom = paths.normalize_path(bom_path)
+    if not bom.is_file():
+        raise FileNotFoundError(f"BOM not found: {bom}")
+    rows = list(csv.DictReader(io.StringIO(bom.read_text(encoding="utf-8-sig"))))
+    operations: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for index, row in enumerate(rows, start=1):
+        designators = _bom_field(
+            row,
+            (
+                "Designator",
+                "Refs",
+                "Reference",
+                "Ref",
+                "Customer Part Number(optional)",
+                "Customer Part Number",
+            ),
+        )
+        code_text = _bom_field(
+            row,
+            (
+                "LCSC Part #",
+                "LCSC Part Number",
+                "LCSC Part Number(optional)",
+                "LCSC",
+                "Supplier Part",
+            ),
+        )
+        if not designators or not code_text:
+            skipped.append(
+                {
+                    "row": index,
+                    "reason": "missing designator or LCSC part number",
+                }
+            )
+            continue
+        match = re.search(r"C\d{4,}", code_text, re.IGNORECASE)
+        if not match:
+            skipped.append(
+                {
+                    "row": index,
+                    "refs": designators,
+                    "reason": f"invalid LCSC part number: {code_text}",
+                }
+            )
+            continue
+        code = match.group(0).upper()
+        mpn = _bom_field(
+            row,
+            (
+                "MPN",
+                "Manufacture Part Number",
+                "Manufacturer Part Number",
+                "Mfr Part",
+                "Part Number",
+            ),
+        )
+        manufacturer = _bom_field(
+            row,
+            ("Manufacturer", "Manufacturer(optional)", "Brand"),
+        )
+        stock = _bom_field(row, ("Stock", "Stock(optional)"))
+
+        for ref in re.split(r"[,;/\\\s]+", designators):
+            ref = ref.strip()
+            if not ref or ref in seen:
+                continue
+            if ref not in known_refs:
+                skipped.append({"row": index, "ref": ref, "reason": "not in PCB"})
+                continue
+            fields = {
+                "LCSC": code,
+                "Supplier": "LCSC",
+                "Supplier Part": code,
+            }
+            if mpn:
+                fields["MPN"] = mpn
+            if manufacturer:
+                fields["Manufacturer"] = manufacturer
+            if stock:
+                fields["Stock"] = stock
+            operations.append(
+                {"kind": "set_footprint_fields", "ref": ref, "fields": fields}
+            )
+            seen.add(ref)
+
+    result: dict[str, Any] | None = None
+    if operations:
+        result = pcb_edit.pcb_batch(
+            pcb,
+            operations,
+            backup=backup,
+            dry_run=dry_run,
+            expected_revision=expected_revision,
+        )
+    updated = (
+        len(operations)
+        if result and result.get("ok") and not result.get("dry_run")
+        else 0
+    )
+    return {
+        "pcb": str(pcb),
+        "bom": str(bom),
+        "rows": len(rows),
+        "planned_updates": len(operations),
+        "updated": updated,
         "skipped": skipped,
         "result": result,
     }

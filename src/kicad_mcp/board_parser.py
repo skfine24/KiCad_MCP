@@ -210,6 +210,10 @@ def read_board(
         layer_node = sexpr.get_value(fp, "layer")
         reference = _footprint_reference(fp)
         value = _footprint_value(fp)
+        properties: dict[str, str] = {}
+        for prop in sexpr.get_all(fp, "property"):
+            if len(prop) > 2:
+                properties[str(prop[1])] = str(prop[2])
         footprints.append(
             {
                 "lib_id": lib_id,
@@ -219,6 +223,7 @@ def read_board(
                 "position_mm": position,
                 "dnp": sexpr.get_value(fp, "dnp"),
                 "exclude_from_pos_files": sexpr.get_value(fp, "exclude_from_pos_files"),
+                "properties": properties,
             }
         )
         for pad in sexpr.get_all(fp, "pad"):

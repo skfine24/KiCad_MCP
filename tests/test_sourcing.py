@@ -6,7 +6,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from kicad_mcp import sch_edit, sourcing  # noqa: E402
-from paths import SCH, TEST_DIR  # noqa: E402
+from kicad_mcp.parts.sites import lcsc  # noqa: E402
+from paths import PCB, SCH, TEST_DIR  # noqa: E402
 
 
 def _component(ref, value, footprint, lib_id="Device:C", properties=None):
@@ -235,3 +236,72 @@ def test_apply_lcsc_bom_to_schematic():
     assert component["properties"]["LCSC"] == "C25804"
     assert component["properties"]["MPN"] == "0805W8F1001T5E"
     assert component["properties"]["Manufacturer"] == "UNI-ROYAL"
+
+
+def test_read_pcb_components():
+    target = TEST_DIR / "sourcing-pcb.kicad_pcb"
+    shutil.copy2(PCB, target)
+    _, components = sourcing._read_pcb_components(target)
+    assert components
+    assert all("properties" in component for component in components)
+    assert all(not component["reference"].startswith("H") for component in components)
+
+
+def test_apply_lcsc_bom_to_pcb():
+    target = TEST_DIR / "sourcing-bom-pcb.kicad_pcb"
+    shutil.copy2(PCB, target)
+    _, components = sourcing._read_pcb_components(target)
+    ref = components[0]["reference"]
+    bom = TEST_DIR / "sourcing-bom-pcb.csv"
+    bom.write_text(
+        "Designator,LCSC Part #,MPN,Manufacturer\n"
+        f"{ref},C25804,0805W8F1001T5E,UNI-ROYAL\n",
+        encoding="utf-8",
+    )
+    result = sourcing.apply_lcsc_bom_to_pcb(target, bom, backup=False)
+    assert result["updated"] == 1
+    _, updated = sourcing._read_pcb_components(target)
+    component = next(item for item in updated if item["reference"] == ref)
+    assert component["properties"]["LCSC"] == "C25804"
+    assert component["properties"]["MPN"] == "0805W8F1001T5E"
+    assert component["properties"]["Manufacturer"] == "UNI-ROYAL"
+    # Sourcing metadata must not be printed on the board silkscreen.
+    text = target.read_text(encoding="utf-8")
+    start = text.index('(property "LCSC"')
+    assert "(hide yes)" in text[start : start + 400]
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {
+            "code": 200,
+            "result": {
+                "totalRow": 1,
+                "dataList": [
+                    {
+                        "productCode": "C5248536",
+                        "productModel": "AP63203QWU-7",
+                        "brandNameEn": "DIODES",
+                        "encapStandard": "TSOT-23-6",
+                        "stockNumber": 0,
+                        "productPriceList": [],
+                    }
+                ],
+            },
+        }
+
+
+class _FakeSession:
+    def get(self, *args, **kwargs):
+        return _FakeResponse()
+
+
+def test_lcsc_alternatives_parse():
+    result = lcsc.alternatives(_FakeSession(), "C780769", limit=5)
+    assert result["product_code"] == "C780769"
+    assert result["total"] == 1
+    assert result["items"][0]["code"] == "C5248536"
+    assert result["items"][0]["model"] == "AP63203QWU-7"
+    assert result["items"][0]["stock"] == 0

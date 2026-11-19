@@ -579,6 +579,20 @@ def apply(op):
         fp = find_fp(op["ref"])
         fp.SetValue(str(op["value"]))
         return {"ref": op["ref"], "value": fp.GetValue()}
+    if kind == "set_footprint_fields":
+        fp = find_fp(op["ref"])
+        fields = op.get("fields") or {}
+        visible = bool(op.get("visible", False))
+        for name, value in fields.items():
+            fp.SetField(str(name), str(value))
+            # New footprint fields default to visible on F.Silkscreen; sourcing
+            # metadata such as LCSC codes must not be printed on the board.
+            fp.GetField(str(name)).SetVisible(visible)
+        return {
+            "ref": op["ref"],
+            "fields": {str(name): fp.GetFieldText(str(name)) for name in fields},
+            "visible": visible,
+        }
     if kind == "replace_footprint":
         old = find_fp(op["ref"])
         io = pcbnew.PCB_IO_KICAD_SEXPR()
@@ -1377,6 +1391,31 @@ def set_footprint_value(
     return pcb_batch(
         pcb_path,
         [{"kind": "set_footprint_value", "ref": ref, "value": value}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def set_footprint_fields(
+    pcb_path: str | Path,
+    ref: str,
+    fields: dict[str, str],
+    visible: bool = False,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    return pcb_batch(
+        pcb_path,
+        [
+            {
+                "kind": "set_footprint_fields",
+                "ref": ref,
+                "fields": fields,
+                "visible": visible,
+            }
+        ],
         backup=backup,
         dry_run=dry_run,
         expected_revision=expected_revision,
