@@ -763,6 +763,6 @@ use it (create project, run ERC/DRC, export manufacturing files).
 - DRC: 0 errors, 1 pre-existing lib_footprint_mismatch warning, 0 unconnected.
 - ERC: 0 errors, 1 pre-existing U5/U6 VOUT pin_to_pin warning.
 - Schematic sourcing: 33/33 groups orderable, USD 26.38.
-- PCB sourcing: 34/34 groups orderable, USD 26.72.
+- PCB sourcing: 33/33 groups orderable, USD 26.38.
 - 63/63 symbols and footprints carry LCSC + MPN + Manufacturer fields.
 - BOM/CPL refs match 63/63 (SMT 50/50).
