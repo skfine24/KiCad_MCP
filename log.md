@@ -745,3 +745,24 @@ use it (create project, run ERC/DRC, export manufacturing files).
   AP63203WU (C780769) still stock 0. DRC unchanged: 0 errors, 1 pre-existing
   `lib_footprint_mismatch` warning, 0 unconnected.
 - Tests: `uv run --with pytest pytest -q` -> 40 passed.
+
+## 2026-11-19 - AIRGO controller: LCSC rework applied
+
+### Summary
+- Replaced out-of-stock parts: C8 22uF -> C338078 (TDK C2012X5R1E226MT000E),
+  U3 AP63203WU-7 -> C2071868 (AP63200WU-7 adjustable).
+- Added FB divider R20 31.6k (C483116) / R21 10k (C17414) on B.Cu; U3 pin 1
+  moved to a new /FB net, 3V3 rail rerouted on B.Cu with 4 vias.
+- Schematic updated: U3 value, FB label, R20/R21 symbols, Q3 footprint SOT-23.
+- PCB values D2-D4/SW1 aligned with schematic (LED, POWER_SW); Q1/Q3 split
+  into separate BOM rows by footprint (SOT-23-3 / SOT-23).
+- Regenerated Gerbers/drill/ZIP, CPL (PosY negated) and BOM files; added
+  `airgo_lcsc_bom_full.csv` with MPN/Manufacturer for field enrichment.
+
+### Validation
+- DRC: 0 errors, 1 pre-existing lib_footprint_mismatch warning, 0 unconnected.
+- ERC: 0 errors, 1 pre-existing U5/U6 VOUT pin_to_pin warning.
+- Schematic sourcing: 33/33 groups orderable, USD 26.38.
+- PCB sourcing: 34/34 groups orderable, USD 26.72.
+- 63/63 symbols and footprints carry LCSC + MPN + Manufacturer fields.
+- BOM/CPL refs match 63/63 (SMT 50/50).
