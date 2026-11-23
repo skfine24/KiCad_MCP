@@ -304,14 +304,21 @@ def sch_add_symbol(
 @mcp.tool(annotations=WRITE)
 def sch_delete_item(
     schematic_path: str,
-    item_uuid: str,
+    item_uuid: str | None = None,
+    uuid: str | None = None,
     backup: bool = True,
     dry_run: bool = False,
     expected_revision: str | None = None,
 ) -> dict:
-    """Delete a schematic item by UUID (symbol/wire/label/no_connect)."""
+    """Delete a schematic item by UUID (symbol/wire/label/no_connect).
+
+    ``uuid`` is accepted as an alias for ``item_uuid`` so both spellings work.
+    """
+    target = item_uuid or uuid
+    if not target:
+        raise ValueError("item_uuid (or uuid) is required")
     return sch_edit.sch_delete_item(
-        _resolve(schematic_path), item_uuid,
+        _resolve(schematic_path), target,
         backup=backup, dry_run=dry_run, expected_revision=expected_revision,
     )
 
@@ -1019,13 +1026,34 @@ def pcb_batch(
 ) -> dict:
     """Apply PCB operations in one transaction.
 
-    Supported kinds: add_tracks, add_via, delete_tracks, trim_track,
-    set_pad_net, set_footprint_value, replace_footprint, place_footprint,
-    set_zone_connection, add_zone, add_keepout, set_zone_priority,
-    remove_islands, delete_zone, refill. The board is edited on a local
-    staging copy and saved once; any failure leaves the original untouched.
-    dry_run returns the planned result without writing. In safe mode,
-    confirm=True is required unless dry_run is used.
+    Supported kinds and their parameters:
+
+    - ``add_tracks``: points ([[x,y],...]), layer, width, net
+    - ``add_via``: x, y, net, diameter, drill
+    - ``delete_tracks``: uuids
+    - ``trim_track``: uuid, from_mm, to_mm
+    - ``set_track_width``: width, and uuids, or net/layer filters
+    - ``set_pad_net``: ref, pad, net
+    - ``set_footprint_value``: ref, value
+    - ``set_footprint_fields``: ref, fields, visible
+    - ``replace_footprint``: ref, lib_path, name, lib_id, keep_value, transfer_nets, value
+    - ``place_footprint``: lib_path, name, lib_id, reference, value, x, y, layer,
+      rotation, pad_nets ({"1": "GND"}). A footprint placed on ``B.Cu`` is flipped
+      so pads and graphics move to the back layers.
+    - ``delete_footprint``: ref
+    - ``set_zone_connection``: mode, target (pad: ref/pad, or zone: zone_index)
+    - ``add_zone``: net, layers, points, priority, clearance, min_thickness,
+      fill_mode, pad_connection, island_removal, min_island_area_mm2
+    - ``add_keepout``: layers, points, tracks, vias, pads, zone_fills, footprints
+    - ``set_zone_priority``: zone_index, priority
+    - ``remove_islands``: net, mode, min_area_mm2
+    - ``delete_zone``: zone_index
+    - ``refill``: no parameters
+
+    All copper layers (F.Cu, In1.Cu..In30.Cu, B.Cu) are accepted. The board is
+    edited on a local staging copy and saved once; any failure leaves the
+    original untouched. dry_run returns the planned result without writing. In
+    safe mode, confirm=True is required unless dry_run is used.
     """
     if not dry_run:
         _require_confirm(confirm, "pcb_batch")
@@ -1120,6 +1148,70 @@ def place_footprint(
         _resolve(pcb_path), footprint, reference, value, x_mm, y_mm,
         layer=layer, rotation=rotation, pad_nets=pad_nets,
         backup=backup, dry_run=dry_run, expected_revision=expected_revision,
+    )
+
+
+@mcp.tool(annotations=WRITE)
+def delete_footprint(
+    pcb_path: str,
+    ref: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Delete a footprint by reference designator.
+
+    Uses a staged pcbnew process; the board is replaced atomically after the
+    footprint is removed.
+    """
+    return pcb_edit.delete_footprint(
+        _resolve(pcb_path), ref,
+        backup=backup, dry_run=dry_run, expected_revision=expected_revision,
+    )
+
+
+@mcp.tool(annotations=WRITE)
+def set_track_width(
+    pcb_path: str,
+    width: float,
+    uuids: list[str] | None = None,
+    net: str | None = None,
+    layer: str | None = None,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Set track/via width by UUID list, or by net and/or layer.
+
+    Without ``uuids`` every track/via matching ``net``/``layer`` is changed.
+    """
+    return pcb_edit.set_track_width(
+        _resolve(pcb_path), width, uuids=uuids, net=net, layer=layer,
+        backup=backup, dry_run=dry_run, expected_revision=expected_revision,
+    )
+
+
+@mcp.tool(annotations=WRITE)
+def export_dsn(pcb_path: str, dsn_path: str) -> dict:
+    """Export a Specctra DSN file for an external autorouter.
+
+    The board is staged with its .kicad_pro so netclasses in the DSN match the
+    KiCad project instead of the board's embedded defaults.
+    """
+    return pcb_edit.export_dsn(_resolve(pcb_path), _resolve(dsn_path))
+
+
+@mcp.tool(annotations=WRITE)
+def import_ses(
+    pcb_path: str,
+    ses_path: str,
+    backup: bool = True,
+    expected_revision: str | None = None,
+) -> dict:
+    """Import a Specctra SES routing result into the board."""
+    return pcb_edit.import_ses(
+        _resolve(pcb_path), _resolve(ses_path),
+        backup=backup, expected_revision=expected_revision,
     )
 
 

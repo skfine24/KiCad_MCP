@@ -9,8 +9,31 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.9.1** — PCB-side LCSC sourcing. v0.9.1 adds PCB footprint
-annotation/verification and LCSC alternative-part lookup.
+Current release: **v0.9.2** — multi-layer robustness fixes on top of v0.9.1.
+v0.9.2 fixes bottom-side footprint placement, inner-layer track editing,
+project-library resolution, manufacturing layer selection and staged refills.
+
+## What's new in v0.9.2
+
+- **Bottom-side footprints are flipped correctly**: `place_footprint(layer="B.Cu")`
+  and `replace_footprint` now move pads, silkscreen, courtyard and fab items to
+  B.Cu/B.* instead of only changing the footprint layer.
+- **Inner copper layers**: `add_tracks` and `pcb_batch` accept
+  `In1.Cu`..`In30.Cu`.
+- **Project footprint libraries**: `Library:Footprint` resolves through the
+  project's `fp-lib-table` (including `${KIPRJMOD}`); absolute/UNC `.kicad_mod`
+  paths and board-relative paths work, with a file-name fallback.
+- **Manufacturing layers**: `manufacturing_profile` detects the board's copper
+  count and always exports inner layers (In1/In2 on 4-layer boards).
+- **Staged refills keep project rules**: staging copies now include the sibling
+  `.kicad_pro`, so `refill_first` uses the project netclasses instead of the
+  built-in 0.2 mm defaults (which re-fragmented GND planes).
+- **New tools**: `delete_footprint`, `set_track_width`, `export_dsn`,
+  `import_ses`.
+- **`sch_delete_item`** accepts `uuid` as an alias for `item_uuid`.
+- **Atomic writes** retry `os.replace` on transient Windows/NAS sharing
+  violations.
+- **`pcb_batch`** documents every supported operation and its parameters.
 
 ## What's new in v0.9.1
 
@@ -264,6 +287,7 @@ requires the credential file above.
 
 | Version | Change |
 |---|---|
+| 0.9.2 | MCP fixes: bottom-side flip, inner-layer tracks, project libraries, 4-layer manufacturing, staged refills, delete_footprint/set_track_width/DSN-SES |
 | 0.8.1 | Maintenance: UTF-8 enforcement, dead-code cleanup, standalone parts server removed |
 | 0.8.0 | Vendor part search + BOM purchase lists + DeviceMart cart merged in (14 tools) |
 | 0.7.0 | Version bump only (release marker for the DigiKey BOM workflow) |

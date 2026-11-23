@@ -93,6 +93,28 @@ def revision_matches(path: str | Path, expected: str | None) -> bool:
     return actual is not None and actual == expected
 
 
+def _replace_with_retry(tmp: Path, target: Path, attempts: int = 8) -> None:
+    """os.replace with backoff for transient Windows/NAS sharing violations."""
+    delay = 0.15
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, target)
+            return
+        except OSError as exc:
+            # WinError 5 (access denied) / 32 (sharing violation) are common on
+            # SMB shares when antivirus or the KiCad GUI briefly holds a handle.
+            if getattr(exc, "winerror", None) not in (5, 32) and not isinstance(exc, PermissionError):
+                raise
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(delay)
+            delay = min(delay * 1.7, 2.0)
+    if last_error is not None:
+        raise last_error
+
+
 def atomic_write_text(
     path: str | Path,
     text: str,
@@ -109,7 +131,7 @@ def atomic_write_text(
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, target)
+        _replace_with_retry(tmp, target)
     finally:
         if tmp.exists():
             try:
@@ -128,7 +150,7 @@ def atomic_copy(src: str | Path, dst: str | Path) -> Path:
     tmp = target.with_name(f".{target.name}.{token}.tmp")
     try:
         shutil.copy2(source, tmp)
-        os.replace(tmp, target)
+        _replace_with_retry(tmp, target)
     finally:
         if tmp.exists():
             try:
@@ -158,12 +180,22 @@ def backup_file(path: str | Path) -> str | None:
 
 
 def stage_local(path: str | Path, suffix: str | None = None) -> Path:
-    """Copy a file to the local temp staging directory."""
+    """Copy a file to the local temp staging directory.
+
+    The sibling ``.kicad_pro`` is copied alongside the staged document (with a
+    matching stem) so pcbnew/eeschema load the project's netclasses and design
+    rules instead of falling back to built-in defaults.  Without this, a zone
+    refill on a staged 4-layer board used 0.2 mm clearances and re-fragmented
+    the GND plane.
+    """
     source = normalize_path(path)
     _STAGE_DIR.mkdir(parents=True, exist_ok=True)
     suffix = suffix if suffix is not None else source.suffix
     staging = _STAGE_DIR / f"{uuid.uuid4().hex}_{source.stem}{suffix}"
     shutil.copy2(source, staging)
+    project = source.with_suffix(".kicad_pro")
+    if project.is_file():
+        shutil.copy2(project, staging.with_suffix(".kicad_pro"))
     return staging
 
 

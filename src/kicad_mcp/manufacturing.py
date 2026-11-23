@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from . import kicad_cli, paths, pcb_edit
+from . import board_parser, kicad_cli, paths, pcb_edit
 
 _GERBER_EXTENSIONS = {
     "F.Cu": (".gtl",),
@@ -19,6 +19,30 @@ _GERBER_EXTENSIONS = {
     "B.Paste": (".gbp",),
     "Edge.Cuts": (".gm1",),
 }
+for _i in range(1, 31):
+    _GERBER_EXTENSIONS[f"In{_i}.Cu"] = (f".g{_i}",)
+
+
+def default_layers(pcb: Path) -> list[str]:
+    """Standard manufacturing layers including every copper layer of the board.
+
+    The generic profile used to export only F.Cu/B.Cu, silently omitting the
+    inner layers of a 4-layer board.  The copper count is read from the board so
+    In1..In(n-2) are always included.
+    """
+    try:
+        info = board_parser.read_board(pcb)
+        copper = int(info.get("copper_layers") or 2)
+    except Exception:
+        copper = 2
+    layers = ["F.Cu"]
+    for index in range(1, max(1, copper - 1)):
+        layers.append(f"In{index}.Cu")
+    layers.append("B.Cu")
+    layers.extend(
+        ["F.SilkS", "B.SilkS", "F.Mask", "B.Mask", "F.Paste", "B.Paste", "Edge.Cuts"]
+    )
+    return layers
 
 
 def _collect_files(root: Path, exclude: set[str] | None = None) -> list[dict]:
@@ -131,7 +155,7 @@ def manufacturing_profile(
 
     out_dir = paths.normalize_path(output_dir) if output_dir else pcb.parent / "manufacturing"
     out_dir.mkdir(parents=True, exist_ok=True)
-    layers = layers or kicad_cli.STANDARD_GERBER_LAYERS.split(",")
+    layers = layers or default_layers(pcb)
     layer_text = ",".join(layers)
     stem = pcb.stem
     exports = {}

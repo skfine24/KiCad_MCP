@@ -392,28 +392,91 @@ def search_footprints(
     return {"query": query, "library": library, "count": len(matches), "footprints": matches}
 
 
-def resolve_footprint(footprint: str) -> dict:
-    raw = str(footprint)
+def _project_pretty_dirs(base_dir: Path | None) -> list[Path]:
+    """Return .pretty directories declared in the project's fp-lib-table.
+
+    KiCad stores project libraries as ``(lib (name "Drone")(uri
+    "${KIPRJMOD}/libs/Drone.pretty"))``.  Resolving ``${KIPRJMOD}`` against
+    the board's directory lets ``Drone:Footprint`` work outside KiCad.
+    """
+    if base_dir is None:
+        return []
+    base = Path(base_dir)
+    table = None
+    for candidate_dir in (base, base.parent):
+        candidate = candidate_dir / "fp-lib-table"
+        if candidate.is_file():
+            table = candidate
+            base = candidate_dir
+            break
+    if table is None:
+        return []
+    try:
+        root = sexpr.load_file(table)
+    except Exception:
+        return []
+    dirs = []
+    for lib in sexpr.get_all(root, "lib"):
+        uri = sexpr.get_value(lib, "uri")
+        if not uri:
+            continue
+        text = str(uri)
+        text = text.replace("${KIPRJMOD}", str(base)).replace("$(KIPRJMOD)", str(base))
+        text = os.path.expandvars(text)
+        candidate = Path(text).expanduser()
+        if candidate.is_dir():
+            dirs.append(candidate)
+    return dirs
+
+
+def resolve_footprint(footprint: str, base_dir: str | Path | None = None) -> dict:
+    raw = str(footprint).strip().strip('"').strip("'")
+    base = Path(base_dir).expanduser() if base_dir else None
+    global_pretty: list[Path] = []
+    for parent in footprint_dirs():
+        global_pretty.extend(sorted(parent.glob("*.pretty")))
+    search_dirs = _project_pretty_dirs(base) + global_pretty
+
     if raw.lower().endswith(".kicad_mod"):
-        path = paths.normalize_path(raw)
-        if not path.is_file():
-            raise FileNotFoundError(f"footprint file not found: {path}")
-        return {"lib_path": str(path.parent), "name": path.stem, "lib_id": path.stem}
-    if ":" in raw:
-        library, name = raw.split(":", 1)
-        for directory in footprint_dirs():
-            candidate = directory / f"{library}.pretty"
-            if candidate.is_dir():
-                return {"lib_path": str(candidate), "name": name, "lib_id": raw}
-        raise FileNotFoundError(f"footprint library not found: {library}")
-    for directory in footprint_dirs():
-        for candidate in directory.glob("*.pretty"):
-            if (candidate / f"{raw}.kicad_mod").is_file():
+        candidates = [Path(raw)]
+        if base is not None:
+            candidates.append(base / raw)
+        for candidate in candidates:
+            try:
+                path = paths.normalize_path(candidate)
+            except Exception:
+                continue
+            if path.is_file():
+                return {"lib_path": str(path.parent), "name": path.stem, "lib_id": path.stem}
+        # Fall back to searching by file name in project and global libraries.
+        # This also recovers paths that a client mangled while joining roots.
+        name = Path(raw).stem
+        for directory in search_dirs:
+            candidate = directory / f"{name}.kicad_mod"
+            if candidate.is_file():
                 return {
-                    "lib_path": str(candidate),
-                    "name": raw,
-                    "lib_id": f"{candidate.stem}:{raw}",
+                    "lib_path": str(directory),
+                    "name": name,
+                    "lib_id": f"{directory.stem}:{name}",
                 }
+        raise FileNotFoundError(f"footprint file not found: {raw}")
+
+    if ":" in raw:
+        library_name, name = raw.split(":", 1)
+        for directory in search_dirs:
+            if directory.stem.lower() != library_name.lower():
+                continue
+            if (directory / f"{name}.kicad_mod").is_file():
+                return {"lib_path": str(directory), "name": name, "lib_id": raw}
+        raise FileNotFoundError(f"footprint library not found: {library_name}")
+
+    for directory in search_dirs:
+        if (directory / f"{raw}.kicad_mod").is_file():
+            return {
+                "lib_path": str(directory),
+                "name": raw,
+                "lib_id": f"{directory.stem}:{raw}",
+            }
     raise FileNotFoundError(f"footprint not found: {raw}")
 
 

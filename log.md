@@ -1,3 +1,54 @@
+# 2026-11-23: KiCad MCP server v0.9.2 (multi-layer robustness)
+
+## Summary
+
+Fixed the tool behaviour that blocked a 4-layer 35x35 mm board redesign:
+bottom-side footprints were not flipped, inner copper layers were rejected,
+project footprint libraries were not resolved, the generic manufacturing
+profile omitted inner Gerbers, and staged refills ignored the project rules.
+Added footprint deletion, track-width editing and Specctra DSN/SES tools.
+
+## Files Changed
+
+- `src/kicad_mcp/pcb_edit.py`: inner-layer map (In1..In30) in both the
+  add-tracks and batch scripts; `place_footprint`/`replace_footprint` flip
+  pads/graphics when the target side differs (and skip the flip when a
+  bottom-authored library file already loads on B.Cu); new `delete_footprint`
+  and `set_track_width` operations; `export_dsn`/`import_ses`; footprint
+  resolution receives the board directory.
+- `src/kicad_mcp/library.py`: `resolve_footprint(footprint, base_dir)` reads the
+  project `fp-lib-table` (`${KIPRJMOD}`), accepts UNC/absolute and board-relative
+  `.kicad_mod` paths, and falls back to a file-name search.
+- `src/kicad_mcp/paths.py`: `os.replace` retries on WinError 5/32; staging copies
+  now carry the sibling `.kicad_pro` so pcbnew uses project netclasses/rules.
+- `src/kicad_mcp/manufacturing.py`: `default_layers()` reads the board's copper
+  count and includes In1..In(n-2); inner Gerber extensions added to the check.
+- `src/kicad_mcp/server.py`: `delete_footprint`, `set_track_width`, `export_dsn`,
+  `import_ses` tools; `sch_delete_item` accepts `uuid`/`item_uuid`; `pcb_batch`
+  documents all operation parameters.
+- `pyproject.toml`, `src/kicad_mcp/__init__.py`: version 0.9.2.
+- `README.md`, `log.md`: release notes.
+
+## Reason
+
+User requested all MCP issues found during the drone ESP32-2 Rev D routing work
+be fixed and released as v0.9.2.
+
+## Validation
+
+- `uv run --extra dev pytest -q`: 40 passed.
+- Manual checks on a copy of the 35x35 mm 4-layer board:
+  - standard F.Cu footprint placed on B.Cu -> pads/graphics on B.*; bottom-authored
+    library footprint stays on B.Cu; front placement unchanged.
+  - `replace_footprint` on a bottom footprint keeps B.Cu and transfers pad nets.
+  - `add_tracks` on In2.Cu works; `set_track_width` changes the segment.
+  - `delete_footprint` removes the footprint and saves.
+  - `export_dsn` contains the project netclasses (Power/Motor/USB/Battery).
+  - `manufacturing_profile` default layers include In1/In2 and all 11 layer
+    checks pass.
+  - `refill_first` on a staged copy keeps all 99 GND pads in one group (263
+    items) instead of re-fragmenting the plane.
+
 # 2026-11-17: KiCad MCP server v0.8.1 (maintenance)
 
 ## Summary

@@ -39,6 +39,13 @@ _LAYERS = {
     "B.CrtYd": pcbnew.B_CrtYd, "F.Fab": pcbnew.F_Fab, "B.Fab": pcbnew.B_Fab,
 }
 
+# Inner copper layers (In1.Cu .. In30.Cu) exist only in multi-layer boards.
+for _i in range(1, 31):
+    _key = "In%d.Cu" % _i
+    _attr = "In%d_Cu" % _i
+    if hasattr(pcbnew, _attr):
+        _LAYERS[_key] = getattr(pcbnew, _attr)
+
 
 def _layer(name):
     if name in _LAYERS:
@@ -126,6 +133,39 @@ try:
         pcbnew.SaveBoard(p["pcb"], board)
         out = {"via_added": True, "uuid": v.m_Uuid.AsString(), "at_mm": [p["x"], p["y"]],
                "diameter_mm": p["diameter"], "drill_mm": p["drill"], "net": net.GetNetname()}
+except Exception as exc:
+    out = {"error": "exception", "message": "{}: {}".format(type(exc).__name__, exc)}
+print(json.dumps(out))
+"""
+
+_DSN_EXPORT_SCRIPT = r"""
+import json, sys
+import pcbnew
+
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+out = {}
+try:
+    board = pcbnew.LoadBoard(p["pcb"])
+    ok = pcbnew.ExportSpecctraDSN(board, p["dsn"])
+    out = {"exported": bool(ok), "dsn": p["dsn"]}
+except Exception as exc:
+    out = {"error": "exception", "message": "{}: {}".format(type(exc).__name__, exc)}
+print(json.dumps(out))
+"""
+
+_SES_IMPORT_SCRIPT = r"""
+import json, sys
+import pcbnew
+
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+out = {}
+try:
+    board = pcbnew.LoadBoard(p["pcb"])
+    ok = pcbnew.ImportSpecctraSES(board, p["ses"])
+    pcbnew.SaveBoard(p["pcb"], board)
+    tracks = [t for t in board.GetTracks() if isinstance(t, pcbnew.PCB_TRACK)]
+    vias = [t for t in board.GetTracks() if isinstance(t, pcbnew.PCB_VIA)]
+    out = {"imported": bool(ok), "tracks": len(tracks), "vias": len(vias)}
 except Exception as exc:
     out = {"error": "exception", "message": "{}: {}".format(type(exc).__name__, exc)}
 print(json.dumps(out))
@@ -436,6 +476,13 @@ _LAYERS = {
     "B.CrtYd": pcbnew.B_CrtYd, "F.Fab": pcbnew.F_Fab, "B.Fab": pcbnew.B_Fab,
 }
 
+# Inner copper layers (In1.Cu .. In30.Cu) exist only in multi-layer boards.
+for _i in range(1, 31):
+    _key = "In%d.Cu" % _i
+    _attr = "In%d_Cu" % _i
+    if hasattr(pcbnew, _attr):
+        _LAYERS[_key] = getattr(pcbnew, _attr)
+
 _CONNECTION = {
     "full": pcbnew.ZONE_CONNECTION_FULL,
     "thermal": pcbnew.ZONE_CONNECTION_THERMAL,
@@ -602,9 +649,10 @@ def apply(op):
         new.SetFPIDAsString(op.get("lib_id") or op["name"])
         new.SetReference(old.GetReference())
         new.SetValue(old.GetValue() if op.get("keep_value", True) else str(op.get("value", old.GetValue())))
-        new.SetPosition(old.GetPosition())
+        pos = old.GetPosition()
+        target_layer = old.GetLayer()
+        new.SetPosition(pos)
         new.SetOrientation(old.GetOrientation())
-        new.SetLayer(old.GetLayer())
         if op.get("transfer_nets", True):
             old_nets = {pad.GetNumber(): pad.GetNetname() for pad in old.Pads()}
             for pad in new.Pads():
@@ -613,11 +661,25 @@ def apply(op):
                     net = board.FindNet(netname)
                     if net is not None:
                         pad.SetNet(net)
+        ref = old.GetReference()
+        fpid = new.GetFPIDAsString()
+        value = new.GetValue()
+        pad_count = new.GetPadCount()
         board.Remove(old)
         _KEEP_ALIVE.append(old)
         board.Add(new)
         _KEEP_ALIVE.append(new)
-        return {"ref": op["ref"], "footprint": new.GetFPIDAsString(), "value": new.GetValue()}
+        # Flip invalidates the Python proxy for this footprint in some KiCad
+        # builds, so capture everything we need before calling it.  Only flip
+        # when the loaded footprint is not already on the requested side
+        # (bottom-authored library files load with pads on B.Cu).
+        if new.GetLayer() != target_layer:
+            if target_layer in (pcbnew.F_Cu, pcbnew.B_Cu) and new.GetLayer() in (pcbnew.F_Cu, pcbnew.B_Cu):
+                new.Flip(pos, False)
+            else:
+                new.SetLayer(target_layer)
+        return {"ref": ref, "footprint": fpid, "value": value, "pads": pad_count,
+                "layer": pcbnew.LayerName(target_layer)}
     if kind == "place_footprint":
         io = pcbnew.PCB_IO_KICAD_SEXPR()
         fp = io.FootprintLoad(op["lib_path"], op["name"])
@@ -626,15 +688,51 @@ def apply(op):
         fp.SetFPIDAsString(op.get("lib_id") or op["name"])
         fp.SetReference(str(op["reference"]))
         fp.SetValue(str(op.get("value", "")))
-        fp.SetPosition(pcbnew.VECTOR2I(mm(op["x"]), mm(op["y"])))
+        pos = pcbnew.VECTOR2I(mm(op["x"]), mm(op["y"]))
+        fp.SetPosition(pos)
         fp.SetOrientationDegrees(float(op.get("rotation", 0)))
-        fp.SetLayer(layer_id(op.get("layer", "F.Cu")))
+        target_layer = layer_id(op.get("layer", "F.Cu"))
+        # Pad nets must be assigned before flipping: Flip invalidates the
+        # Python proxy for this footprint in some KiCad builds.
         for pad_number, net_name in (op.get("pad_nets") or {}).items():
             pad = find_pad(fp, pad_number)
             pad.SetNet(find_net(net_name))
+        fpid = fp.GetFPIDAsString()
+        pad_count = fp.GetPadCount()
         board.Add(fp)
         _KEEP_ALIVE.append(fp)
-        return {"reference": fp.GetReference(), "footprint": fp.GetFPIDAsString(), "pads": fp.GetPadCount()}
+        if fp.GetLayer() != target_layer:
+            if target_layer in (pcbnew.F_Cu, pcbnew.B_Cu) and fp.GetLayer() in (pcbnew.F_Cu, pcbnew.B_Cu):
+                fp.Flip(pos, False)
+            else:
+                fp.SetLayer(target_layer)
+        return {"reference": str(op["reference"]), "footprint": fpid, "pads": pad_count,
+                "layer": pcbnew.LayerName(target_layer)}
+    if kind == "delete_footprint":
+        fp = find_fp(op["ref"])
+        ref = fp.GetReference()
+        board.Remove(fp)
+        _KEEP_ALIVE.append(fp)
+        return {"deleted": ref, "ref": ref}
+    if kind == "set_track_width":
+        uuids = set(op.get("uuids") or [])
+        net_filter = op.get("net")
+        layer_filter = op.get("layer")
+        width = mm(op["width"])
+        changed = []
+        for item in board.GetTracks():
+            uid = item.m_Uuid.AsString()
+            if uuids:
+                if uid not in uuids:
+                    continue
+            else:
+                if net_filter and item.GetNetname() != net_filter:
+                    continue
+                if layer_filter and isinstance(item, pcbnew.PCB_TRACK) and item.GetLayerName() != layer_filter:
+                    continue
+            item.SetWidth(width)
+            changed.append(uid)
+        return {"changed": len(changed), "uuids": changed, "width_mm": op["width"]}
     if kind == "set_zone_connection":
         mode = _CONNECTION[str(op.get("mode", "inherited"))]
         if op.get("target") == "pad":
@@ -1279,11 +1377,15 @@ def _backup(pcb: Path) -> str | None:
     return paths.backup_file(pcb)
 
 
-def resolve_footprint(footprint: str) -> dict:
-    """Resolve ``Library:Footprint`` or a bare name to a .pretty library."""
+def resolve_footprint(footprint: str, base_dir: str | Path | None = None) -> dict:
+    """Resolve ``Library:Footprint`` or a bare name to a .pretty library.
+
+    ``base_dir`` is the directory of the PCB being edited; it lets the resolver
+    use the project's ``fp-lib-table`` and resolve project-relative paths.
+    """
     from . import library
 
-    return library.resolve_footprint(footprint)
+    return library.resolve_footprint(footprint, base_dir=base_dir)
 
 
 def pcb_batch(
@@ -1433,7 +1535,7 @@ def replace_footprint(
     dry_run: bool = False,
     expected_revision: str | None = None,
 ) -> dict:
-    resolved = resolve_footprint(footprint)
+    resolved = resolve_footprint(footprint, base_dir=Path(pcb_path).expanduser().parent)
     operation = {
         "kind": "replace_footprint",
         "ref": ref,
@@ -1466,7 +1568,7 @@ def place_footprint(
     dry_run: bool = False,
     expected_revision: str | None = None,
 ) -> dict:
-    resolved = resolve_footprint(footprint)
+    resolved = resolve_footprint(footprint, base_dir=Path(pcb_path).expanduser().parent)
     operation = {
         "kind": "place_footprint",
         "reference": reference,
@@ -1485,6 +1587,105 @@ def place_footprint(
         dry_run=dry_run,
         expected_revision=expected_revision,
     )
+
+
+def delete_footprint(
+    pcb_path: str | Path,
+    ref: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Delete one footprint by reference designator."""
+    return pcb_batch(
+        pcb_path,
+        [{"kind": "delete_footprint", "ref": ref}],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def set_track_width(
+    pcb_path: str | Path,
+    width: float,
+    uuids: list[str] | None = None,
+    net: str | None = None,
+    layer: str | None = None,
+    backup: bool = True,
+    dry_run: bool = False,
+    expected_revision: str | None = None,
+) -> dict:
+    """Set the width of tracks/vias selected by UUID, or by net and/or layer."""
+    operation = {
+        "kind": "set_track_width",
+        "width": float(width),
+        "uuids": list(uuids or []),
+        "net": net,
+        "layer": layer,
+    }
+    return pcb_batch(
+        pcb_path,
+        [operation],
+        backup=backup,
+        dry_run=dry_run,
+        expected_revision=expected_revision,
+    )
+
+
+def export_dsn(
+    pcb_path: str | Path,
+    dsn_path: str | Path,
+    timeout: float = 120.0,
+) -> dict:
+    """Export a Specctra DSN file for an external autorouter.
+
+    The board is staged locally with its project file so the exported
+    netclasses match the KiCad project (not the board's embedded defaults).
+    """
+    pcb = _require_pcb(pcb_path)
+    dsn = paths.normalize_path(dsn_path)
+    dsn.parent.mkdir(parents=True, exist_ok=True)
+    result = _run_on_pcb(_DSN_EXPORT_SCRIPT, pcb, {"dsn": str(dsn)}, timeout, write_back=False)
+    if not result.get("ok"):
+        raise RuntimeError(f"DSN export failed: {result}")
+    return {"ok": True, "dsn": str(dsn), "result": result.get("result")}
+
+
+def import_ses(
+    pcb_path: str | Path,
+    ses_path: str | Path,
+    backup: bool = True,
+    expected_revision: str | None = None,
+    timeout: float = 120.0,
+) -> dict:
+    """Import a Specctra SES routing result into the board."""
+    pcb = _require_pcb(pcb_path)
+    ses = paths.normalize_path(ses_path)
+    if not ses.is_file():
+        raise FileNotFoundError(f"ses not found: {ses}")
+    with paths.locked(pcb):
+        if expected_revision and not paths.revision_matches(pcb, expected_revision):
+            raise RuntimeError("revision mismatch: pcb changed since it was read")
+        staging = paths.stage_local(pcb, suffix=".kicad_pcb")
+        try:
+            result = _run_script(_SES_IMPORT_SCRIPT, {"pcb": str(staging), "ses": str(ses)}, timeout)
+            if not result.get("ok"):
+                raise RuntimeError(f"SES import failed: {result}")
+            commit = paths.commit_staged(
+                staging, pcb, backup=backup, expected_revision=expected_revision
+            )
+            return {
+                "ok": True,
+                "result": result.get("result"),
+                "backup": commit.get("backup"),
+                "revision": commit.get("revision"),
+            }
+        finally:
+            try:
+                staging.unlink()
+            except OSError:
+                pass
 
 
 def set_zone_connection(
