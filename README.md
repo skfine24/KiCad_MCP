@@ -9,9 +9,40 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.9.2** — multi-layer robustness fixes on top of v0.9.1.
+Current release: **v0.9.4** — multi-layer robustness fixes on top of v0.9.1.
 v0.9.2 fixes bottom-side footprint placement, inner-layer track editing,
 project-library resolution, manufacturing layer selection and staged refills.
+v0.9.3 adds physical body-overlap detection from 3D models, and v0.9.4 adds a
+silkscreen overlap / duplicate / close-pair check.
+
+## What's new in v0.9.4
+
+- **Silkscreen check**: `check_silk_overlaps(pcb_path, min_gap_mm=0.0,
+  include_text=True)` reports `silk_overlaps` (partial intersections),
+  `silk_duplicates` (coincident items such as stacked labels), `silk_close_pairs`
+  (gap below `min_gap_mm`) and `silk_over_pads` (silk crossing a pad) for the
+  same board side. It covers footprint silk graphics, visible text fields
+  (Reference, Value and custom properties such as LCSC/MPN) and board-level
+  silk texts. Rectangles are decomposed into their four outline edges, and text
+  uses the effective glyph shape (`GetEffectiveTextShape`) instead of the
+  padded text box. Graphics of the same footprint are skipped (their outline
+  meets at corners) while text-text pairs are still compared, so stacked
+  property labels are caught.
+- **3D-model orientation fix** in `check_component_overlaps`: KiCad 3D models
+  are Y-up, so the model Y is negated before mapping to board coordinates.
+  Asymmetric bodies (e.g. Molex connectors) are no longer shifted.
+- **PCB net creation**: `find_net` now creates a missing net on the board
+  instead of failing, so tracks and vias can be added for a net that is not yet
+  present in the `.kicad_pcb`.
+
+## What's new in v0.9.3
+
+- **Physical body overlaps**: `check_component_overlaps(pcb_path,
+  min_gap_mm=0.0)` builds each footprint's body box from its 3D-model vertex
+  bounding box (leads included) when consistent with the fab outline, otherwise
+  from the fab outline, then the pads. Same-side intersections are reported as
+  `body_overlaps`, pairs nearer than `min_gap_mm` as `close_pairs`, and courtyard
+  overlaps where the bodies do not touch are returned separately as cosmetic.
 
 ## What's new in v0.9.2
 
@@ -112,15 +143,16 @@ Add this to `~/.config/opencode/opencode.jsonc`:
 ```jsonc
 {
   "mcp": {
-    "kicad": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--from",
-        "git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1",
-        "kicad-mcp"
-      ],
-      "enabled": true
+    "servers": {
+      "kicad": {
+        "type": "local",
+        "command": [
+          "uvx",
+          "--from",
+          "git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4",
+          "kicad-mcp"
+        ]
+      }
     }
   }
 }
@@ -128,7 +160,7 @@ Add this to `~/.config/opencode/opencode.jsonc`:
 
 Restart opencode. `uvx` builds the package from the tagged GitHub source and
 caches the environment; no local clone or virtualenv is required. Use `@main`
-instead of `@v0.8.1` to track the latest commits.
+instead of `@v0.9.4` to track the latest commits.
 
 If you previously had a separate `parts` MCP entry, remove it — v0.8.1 replaces
 it.
@@ -136,14 +168,14 @@ it.
 ### Install as a tool
 
 ```powershell
-uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1
+uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4
 kicad-mcp
 ```
 
 ### pip
 
 ```powershell
-pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.8.1"
+pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4"
 ```
 
 ### Local development
@@ -187,7 +219,7 @@ DeviceMart guest-cart cookies are persisted in
 so the cart survives server restarts. Override the directory with
 `KICAD_MCP_PARTS_STATE_DIR`.
 
-## Tools (91)
+## Tools (107)
 
 | Category | Tools |
 |---|---|
@@ -196,13 +228,13 @@ so the cart survives server restarts. Override the directory with
 | Connectivity | `export_netlist`, `list_nets`, `trace_net` (fresh export by default; `refresh`, `expected_revision`, mtime/hash metadata) |
 | Validation | `run_erc`, `run_drc` (structured severity/type/net/items, `offset`/`limit`, filters, report SHA-256), `find_duplicate_tracks`, `find_isolated_islands` |
 | PCB inspection | `get_board_info` (KiCad 10 pad-level nets, thickness, stackup, netclasses, unconnected pads, optional schematic net merge), `pcb_revision`, `render_pcb` |
-| PCB editing | `add_tracks`, `add_via`, `delete_tracks`, `trim_track`, `prune_dangling`, `refill_zones`, `pcb_batch` (one transaction, dry-run, rollback, expected revision, local staging + atomic save), `set_pad_net`, `set_footprint_value`, `replace_footprint`, `place_footprint`, `set_zone_connection`, `add_zone`, `add_keepout`, `set_zone_priority`, `remove_islands`, `delete_zone` |
+| PCB editing | `add_tracks`, `add_via`, `delete_tracks`, `trim_track`, `prune_dangling`, `refill_zones`, `pcb_batch` (one transaction, dry-run, rollback, expected revision, local staging + atomic save), `set_pad_net`, `set_footprint_value`, `replace_footprint`, `place_footprint`, `delete_footprint`, `set_track_width`, `set_zone_connection`, `add_zone`, `add_keepout`, `set_zone_priority`, `remove_islands`, `delete_zone` |
 | Schematic editing | `sch_add_wire`, `sch_add_label`, `sch_add_no_connect`, `sch_set_value`, `sch_set_property`, `sch_add_symbol` (embeds/flattens lib_symbols, supports `extends`), `sch_delete_item` |
 | Library | `search_symbols`, `search_footprints`, `get_pinout`, `get_footprint_info`, `list_libraries` |
-| Mechanical | `mechanical_check`, `check_courtyard`, `check_3d_models`, `board_edge_clearance` |
-| Manufacturing | `export_gerbers` (optional standard profile), `export_drill`, `export_bom`, `export_pos`, `export_step`, `export_pdf`, `manufacturing_profile` (standard layers + drill/POS/BOM/STEP/PDF + SHA-256 manifest), `verify_manufacturing_output` |
-| BOM | `bom_enrich` (MPN/Manufacturer/Supplier/Stock/Alternate + database merge), `bom_validate_mpn` |
-| Vendor part search | `search_parts` (`digikey` default, `icmart`, `devicemart`, `both`, `all`), `search_digikey`, `search_icmart`, `search_devicemart`, `compare_parts`, `get_part`, `get_digikey_product`, `get_icmart_product`, `get_devicemart_product` |
+| Mechanical | `mechanical_check`, `check_courtyard`, `check_component_overlaps` (3D-model/fab body boxes: overlaps, near-touches, courtyard-only), `check_silk_overlaps` (silk overlaps, coincident duplicates, close pairs, silk over pads), `check_3d_models`, `board_edge_clearance` |
+| Manufacturing | `export_gerbers` (optional standard profile), `export_drill`, `export_bom`, `export_pos`, `export_step`, `export_pdf`, `export_dsn` (Specctra DSN), `import_ses` (routed session import), `manufacturing_profile` (standard layers + drill/POS/BOM/STEP/PDF + SHA-256 manifest), `verify_manufacturing_output` |
+| BOM / sourcing | `bom_enrich` (MPN/Manufacturer/Supplier/Stock/Alternate + database merge), `bom_validate_mpn`, `check_orderable_bom` (LCSC per-group orderability), `prepare_orderable_bom` (optionally writes LCSC fields back), `apply_lcsc_to_schematic`, `apply_lcsc_bom_to_schematic`, `apply_lcsc_bom_to_pcb`, `check_orderable_pcb_bom` |
+| Vendor part search | `search_parts` (`digikey` default, `icmart`, `devicemart`, `lcsc`, `both`, `all`), `search_digikey`, `search_icmart`, `search_devicemart`, `search_lcsc`, `search_lcsc_bom`, `compare_parts`, `get_part`, `get_digikey_product`, `get_icmart_product`, `get_devicemart_product`, `get_lcsc_part`, `get_lcsc_alternatives` |
 | BOM purchasing | `bom_purchase_list` (per-item options, recommended option, availability, estimated KRW total), `check_digikey_bom` (strict MPN/stock check) |
 | DeviceMart cart | `add_to_cart_devicemart` (confirm=True), `get_devicemart_cart`, `remove_from_cart_devicemart` (confirm=True) |
 | Staged editing | `edit_begin`, `edit_commit` (atomic commit with backup/revision) |
@@ -257,10 +289,10 @@ not launch a second editor; open the board manually in that case.
 ## Tests
 
 ```powershell
-uv run --with pytest pytest -q            # 29 unit tests (core + vendor parsers + UTF-8 guard)
+uv run --with pytest pytest -q            # 40 unit tests (core + vendor parsers + UTF-8 guard)
 python tests/integration_test.py          # 19 tool-level checks against a real KiCad demo project
-python tests/stdio_test.py                # MCP stdio handshake, tools/list (91), sample calls
-python tests/smoke_live_parts.py          # live read-only DigiKey/IC Mart/DeviceMart smoke test
+python tests/stdio_test.py                # MCP stdio handshake, tools/list (107), sample calls
+python tests/smoke_live_parts.py          # live read-only DigiKey/IC Mart/DeviceMart/LCSC smoke test
 ```
 
 The unit tests need no network and no KiCad install. `integration_test.py` copies
@@ -287,6 +319,8 @@ requires the credential file above.
 
 | Version | Change |
 |---|---|
+| 0.9.4 | Silkscreen check `check_silk_overlaps` (overlaps, coincident duplicates, close pairs, silk over pads); 3D-model Y-axis fix in body overlap check; `find_net` creates missing nets |
+| 0.9.3 | Physical body overlap check `check_component_overlaps` from 3D models / fab outlines / pads |
 | 0.9.2 | MCP fixes: bottom-side flip, inner-layer tracks, project libraries, 4-layer manufacturing, staged refills, delete_footprint/set_track_width/DSN-SES |
 | 0.8.1 | Maintenance: UTF-8 enforcement, dead-code cleanup, standalone parts server removed |
 | 0.8.0 | Vendor part search + BOM purchase lists + DeviceMart cart merged in (14 tools) |

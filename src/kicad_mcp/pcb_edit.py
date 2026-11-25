@@ -515,10 +515,16 @@ def layer_set(names):
     return result
 
 
+_NEW_NETS = {}
+
 def find_net(name):
     net = board.FindNet(name)
     if net is None:
-        raise ValueError("net_not_found: {}".format(name))
+        if name in _NEW_NETS:
+            return _NEW_NETS[name]
+        net = pcbnew.NETINFO_ITEM(board, name)
+        board.Add(net)
+        _NEW_NETS[name] = net
     return net
 
 

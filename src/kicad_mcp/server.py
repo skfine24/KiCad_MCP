@@ -997,6 +997,37 @@ def board_edge_clearance(pcb_path: str, min_mm: float = 0.5) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+def check_component_overlaps(pcb_path: str, min_gap_mm: float = 0.0) -> dict:
+    """Detect physical component body overlaps and near-touches.
+
+    Body boxes use each footprint's 3D model vertex bounding box (leads included)
+    when it is consistent with the fab outline, otherwise its fab outline, then
+    its pads. Same-side pairs whose body boxes intersect are reported as
+    body_overlaps. With min_gap_mm > 0, remaining pairs closer than that are
+    listed as close_pairs. Courtyard overlaps where the bodies do NOT touch are
+    returned separately as cosmetic.
+    """
+    return mechanical.check_component_overlaps(_resolve(pcb_path), min_gap_mm)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def check_silk_overlaps(
+    pcb_path: str, min_gap_mm: float = 0.0, include_text: bool = True
+) -> dict:
+    """Detect silkscreen overlaps, coincident duplicates, close pairs and silk over pads.
+
+    Checks footprint silk graphics, visible text fields (Reference, Value and
+    custom properties such as LCSC/MPN) and board-level silk texts on the same
+    side. silk_duplicates are coincident items (stacked labels), silk_overlaps
+    are partial intersections, silk_close_pairs are non-touching items closer
+    than min_gap_mm, and silk_over_pads are silk items crossing a pad.
+    """
+    return mechanical.check_silk_overlaps(
+        _resolve(pcb_path), min_gap_mm, include_text
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
 def pcb_revision(pcb_path: str) -> dict:
     """Return mtime/size/SHA-256 revision for a PCB (use as expected_revision)."""
     return pcb_edit.pcb_revision(_resolve(pcb_path))

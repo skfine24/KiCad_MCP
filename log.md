@@ -817,3 +817,42 @@ use it (create project, run ERC/DRC, export manufacturing files).
 - PCB sourcing: 33/33 groups orderable, USD 26.38.
 - 63/63 symbols and footprints carry LCSC + MPN + Manufacturer fields.
 - BOM/CPL refs match 63/63 (SMT 50/50).
+
+## 2026-11-25 - KiCad MCP server v0.9.4 (silkscreen overlap check)
+
+### Summary
+- New read-only tool `check_silk_overlaps(pcb_path, min_gap_mm=0.0, include_text=True)`.
+  Reports same-side silkscreen `silk_overlaps` (partial intersections),
+  `silk_duplicates` (coincident items, e.g. stacked labels), `silk_close_pairs`
+  (gap < min_gap_mm) and `silk_over_pads` (silk crossing a pad), with a summary.
+- Covers footprint silk graphics, visible text fields (Reference, Value and
+  custom properties such as LCSC/MPN) and board-level silk texts.
+- Rectangle silk is decomposed into its four outline edges (a hollow outline is
+  not compared as a filled box); text uses the effective stroke shape
+  (`GetEffectiveTextShape`) instead of the padded text box.
+- Same-footprint graphics are skipped (outline meets its notch at corners);
+  same-footprint text-text pairs are still checked, so stacked property labels
+  are caught. Footprint outlines around their own pads are skipped.
+- Fixed the 3D-model Y-axis convention in `check_component_overlaps`: KiCad 3D
+  models are Y-up, so the model Y is negated before mapping to board
+  coordinates. Asymmetric bodies (Molex connectors) were shifted ~1 mm.
+- `find_net` now creates a missing net on the board instead of raising
+  `net_not_found`, so tracks/vias can be added for a net that is not yet
+  present in the `.kicad_pcb`.
+
+### Files Changed
+- `src/kicad_mcp/mechanical.py`: `_SILK_SCRIPT`, `check_silk_overlaps`, Y-flip fix.
+- `src/kicad_mcp/server.py`: registered `check_silk_overlaps`.
+- `src/kicad_mcp/pcb_edit.py`: `find_net` creates missing nets.
+- `src/kicad_mcp/__init__.py`, `pyproject.toml`: version 0.9.4.
+- `README.md`: v0.9.3/v0.9.4 sections, mechanical tool list, full tool table
+  (107 tools), install tags, test counts, version history.
+
+### Validation
+- `check_silk_overlaps` on the drone ESP32-2 board: 405 silk items,
+  0 overlaps, 0 duplicates, 69 close pairs (min_gap 0.5 mm), 1 silk-over-pad.
+- `check_component_overlaps` on the same board still reports 0 body overlaps.
+- `python -m py_compile` clean; MCP call path exercised through
+  `mechanical.check_silk_overlaps` with the project venv.
+- `pytest -q`: 40 passed. MCP `tools/list`: 107 tools, `check_silk_overlaps`
+  present. README documents all 107 tool names.
