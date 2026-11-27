@@ -9,11 +9,36 @@ search / BOM purchase lists (DigiKey Korea, IC Mart, DeviceMart, LCSC)**.
 
 Repository: https://github.com/skfine24/KiCad_MCP
 
-Current release: **v0.9.4** — multi-layer robustness fixes on top of v0.9.1.
+Current release: **v0.9.5** — CPL generation and verification on top of v0.9.4.
 v0.9.2 fixes bottom-side footprint placement, inner-layer track editing,
 project-library resolution, manufacturing layer selection and staged refills.
-v0.9.3 adds physical body-overlap detection from 3D models, and v0.9.4 adds a
-silkscreen overlap / duplicate / close-pair check.
+v0.9.3 adds physical body-overlap detection from 3D models, v0.9.4 adds a
+silkscreen overlap / duplicate / close-pair check, and v0.9.5 adds a
+JLCPCB-ready CPL export plus a placement / rotation / polarity verifier.
+
+## What's new in v0.9.5
+
+- **`export_cpl`**: writes a JLCPCB CPL (`Designator,Mid X,Mid Y,Rotation,
+  Layer`) with the bottom-side mirror, the Fabrication Toolkit / JLC-KiCad-Tools
+  rotation database, per-footprint `FT Rotation Offset` / `Rotation Offset`
+  overrides and position offsets.  Supports the aux/drill origin (Y-up, matching
+  the Gerbers) and the lower-left origin.
+- **Polarity audit**: every diode, LED, polarized capacitor, IC, transistor and
+  connector is listed with its pin-1 net, pad-1 board position, pad-1 position
+  in the assembly house's bottom-view frame, the KiCad rotation, the corrected
+  CPL rotation and the correction pattern.  When a schematic is supplied, the
+  PCB pad-1 net is compared with the netlist pin-1 net and pin function
+  (e.g. `K_1` for a diode cathode).  The audit reports `polarity_ok` /
+  `polarity_fail` and the actual CPL rotation per part.  Footprints without a
+  known vendor rotation correction are flagged for preview review.
+- **`verify_cpl`**: checks an existing CPL (ours or a supplier's corrected
+  file) against the PCB, BOM and schematic: missing/extra/duplicate designators,
+  mid X/Y within tolerance, rotation within tolerance (bottom-side mirror +
+  vendor correction), layer, BOM/CPL match, and the polarity audit.  It
+  auto-detects the JLCPCB and KiCad POS formats and, with `origin="auto"`,
+  selects the aux or lower-left frame by best position fit.
+- **`manufacturing_profile`** now also exports `*-cpl.csv` and records the CPL
+  readiness, errors and warnings in the manifest.
 
 ## What's new in v0.9.4
 
@@ -149,7 +174,7 @@ Add this to `~/.config/opencode/opencode.jsonc`:
         "command": [
           "uvx",
           "--from",
-          "git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4",
+          "git+https://github.com/skfine24/KiCad_MCP.git@v0.9.5",
           "kicad-mcp"
         ]
       }
@@ -160,7 +185,7 @@ Add this to `~/.config/opencode/opencode.jsonc`:
 
 Restart opencode. `uvx` builds the package from the tagged GitHub source and
 caches the environment; no local clone or virtualenv is required. Use `@main`
-instead of `@v0.9.4` to track the latest commits.
+instead of `@v0.9.5` to track the latest commits.
 
 If you previously had a separate `parts` MCP entry, remove it — v0.8.1 replaces
 it.
@@ -168,14 +193,14 @@ it.
 ### Install as a tool
 
 ```powershell
-uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4
+uv tool install git+https://github.com/skfine24/KiCad_MCP.git@v0.9.5
 kicad-mcp
 ```
 
 ### pip
 
 ```powershell
-pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.9.4"
+pip install "kicad-mcp @ git+https://github.com/skfine24/KiCad_MCP.git@v0.9.5"
 ```
 
 ### Local development
@@ -219,7 +244,7 @@ DeviceMart guest-cart cookies are persisted in
 so the cart survives server restarts. Override the directory with
 `KICAD_MCP_PARTS_STATE_DIR`.
 
-## Tools (107)
+## Tools (109)
 
 | Category | Tools |
 |---|---|
@@ -232,7 +257,7 @@ so the cart survives server restarts. Override the directory with
 | Schematic editing | `sch_add_wire`, `sch_add_label`, `sch_add_no_connect`, `sch_set_value`, `sch_set_property`, `sch_add_symbol` (embeds/flattens lib_symbols, supports `extends`), `sch_delete_item` |
 | Library | `search_symbols`, `search_footprints`, `get_pinout`, `get_footprint_info`, `list_libraries` |
 | Mechanical | `mechanical_check`, `check_courtyard`, `check_component_overlaps` (3D-model/fab body boxes: overlaps, near-touches, courtyard-only), `check_silk_overlaps` (silk overlaps, coincident duplicates, close pairs, silk over pads), `check_3d_models`, `board_edge_clearance` |
-| Manufacturing | `export_gerbers` (optional standard profile), `export_drill`, `export_bom`, `export_pos`, `export_step`, `export_pdf`, `export_dsn` (Specctra DSN), `import_ses` (routed session import), `manufacturing_profile` (standard layers + drill/POS/BOM/STEP/PDF + SHA-256 manifest), `verify_manufacturing_output` |
+| Manufacturing | `export_gerbers` (optional standard profile), `export_drill`, `export_bom`, `export_pos`, `export_cpl` (JLCPCB CPL + rotation corrections + polarity audit), `verify_cpl` (CPL/BOM/PCB placement, rotation and polarity check), `export_step`, `export_pdf`, `export_dsn` (Specctra DSN), `import_ses` (routed session import), `manufacturing_profile` (standard layers + drill/POS/BOM/CPL/STEP/PDF + SHA-256 manifest), `verify_manufacturing_output` |
 | BOM / sourcing | `bom_enrich` (MPN/Manufacturer/Supplier/Stock/Alternate + database merge), `bom_validate_mpn`, `check_orderable_bom` (LCSC per-group orderability), `prepare_orderable_bom` (optionally writes LCSC fields back), `apply_lcsc_to_schematic`, `apply_lcsc_bom_to_schematic`, `apply_lcsc_bom_to_pcb`, `check_orderable_pcb_bom` |
 | Vendor part search | `search_parts` (`digikey` default, `icmart`, `devicemart`, `lcsc`, `both`, `all`), `search_digikey`, `search_icmart`, `search_devicemart`, `search_lcsc`, `search_lcsc_bom`, `compare_parts`, `get_part`, `get_digikey_product`, `get_icmart_product`, `get_devicemart_product`, `get_lcsc_part`, `get_lcsc_alternatives` |
 | BOM purchasing | `bom_purchase_list` (per-item options, recommended option, availability, estimated KRW total), `check_digikey_bom` (strict MPN/stock check) |
@@ -319,6 +344,7 @@ requires the credential file above.
 
 | Version | Change |
 |---|---|
+| 0.9.5 | CPL export `export_cpl` (bottom mirror + vendor rotation DB + per-footprint offsets + polarity audit); CPL verification `verify_cpl` (placement/rotation/layer/BOM/pin-1 check); manufacturing profile exports CPL |
 | 0.9.4 | Silkscreen check `check_silk_overlaps` (overlaps, coincident duplicates, close pairs, silk over pads); 3D-model Y-axis fix in body overlap check; `find_net` creates missing nets |
 | 0.9.3 | Physical body overlap check `check_component_overlaps` from 3D models / fab outlines / pads |
 | 0.9.2 | MCP fixes: bottom-side flip, inner-layer tracks, project libraries, 4-layer manufacturing, staged refills, delete_footprint/set_track_width/DSN-SES |

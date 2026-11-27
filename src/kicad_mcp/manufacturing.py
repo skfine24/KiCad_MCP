@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from . import board_parser, kicad_cli, paths, pcb_edit
+from . import board_parser, cpl, kicad_cli, paths, pcb_edit
 
 _GERBER_EXTENSIONS = {
     "F.Cu": (".gtl",),
@@ -114,9 +114,17 @@ def _write_manifest(
                 "returncode": value.get("returncode"),
                 "output": value.get("output") or value.get("output_dir"),
                 "stderr": value.get("stderr"),
+                "ok": value.get("ok"),
+                "ready": value.get("ready"),
             }
             for key, value in exports.items()
             if isinstance(value, dict)
+        },
+        "cpl": {
+            "output": exports.get("cpl", {}).get("output"),
+            "ready": exports.get("cpl", {}).get("ready"),
+            "errors": exports.get("cpl", {}).get("errors", []),
+            "warnings": exports.get("cpl", {}).get("warnings", []),
         },
     }
     manifest_path = out_dir / "manifest.json"
@@ -138,6 +146,7 @@ def manufacturing_profile(
     include_step: bool = True,
     include_pdf: bool = True,
     include_bom: bool = True,
+    include_cpl: bool = True,
     refill_first: bool = False,
 ) -> dict:
     pcb = paths.normalize_path(pcb_path)
@@ -177,12 +186,20 @@ def manufacturing_profile(
         report_path=out_dir / "drill-report.txt",
     )
     exports["pos"] = kicad_cli.export_pos(pcb, out_dir / f"{stem}-pos.csv")
+    bom_path = out_dir / f"{stem}-bom.csv"
     if include_bom and sch is not None:
         exports["bom"] = kicad_cli.export_bom(
             sch,
-            out_dir / f"{stem}-bom.csv",
+            bom_path,
             exclude_power=True,
             exclude_dnp=True,
+        )
+    if include_cpl:
+        exports["cpl"] = cpl.export_cpl(
+            pcb,
+            out_dir / f"{stem}-cpl.csv",
+            bom_path=bom_path if include_bom and sch is not None else None,
+            schematic_path=sch,
         )
     if include_step:
         exports["step"] = kicad_cli.export_step(pcb, out_dir / f"{stem}.step")

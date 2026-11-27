@@ -5,7 +5,7 @@ from pathlib import Path
 from fastmcp import Context, FastMCP
 from fastmcp.resources import ResourceSecurity
 
-from . import board_parser, bom, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser, sourcing
+from . import board_parser, bom, cpl, diagnostics, ipc, kicad_cli, library, manufacturing, mechanical, parts, paths, pcb_edit, sch_edit, sch_parser, sourcing
 from .parts import purchase
 from .parts.http import RateLimitedSession
 from .parts.sites import devicemart, digikey, icmart, lcsc
@@ -869,12 +869,14 @@ def manufacturing_profile(
     include_step: bool = True,
     include_pdf: bool = True,
     include_bom: bool = True,
+    include_cpl: bool = True,
     refill_first: bool = False,
     ctx: Context | None = None,
 ) -> dict:
-    """Export Gerbers/drill/POS/BOM/STEP/PDF and a SHA-256 manifest.
+    """Export Gerbers/drill/POS/BOM/CPL/STEP/PDF and a SHA-256 manifest.
 
-    The standard layer set excludes Adhesive/Courtyard/Fab/Margin/User.
+    The standard layer set excludes Adhesive/Courtyard/Fab/Margin/User.  The
+    CPL export includes the vendor rotation corrections and a polarity audit.
     """
     if ctx is not None:
         ctx.report_progress(0, 100, "exporting manufacturing files")
@@ -887,6 +889,7 @@ def manufacturing_profile(
         include_step=include_step,
         include_pdf=include_pdf,
         include_bom=include_bom,
+        include_cpl=include_cpl,
         refill_first=refill_first,
     )
     if ctx is not None:
@@ -921,6 +924,78 @@ def self_test(ctx: Context | None = None) -> dict:
 def export_pos(pcb_path: str, output_path: str | None = None) -> dict:
     """Export component placement (pick & place) CSV from a PCB."""
     return kicad_cli.export_pos(_resolve(pcb_path), output_path)
+
+
+@mcp.tool
+def export_cpl(
+    pcb_path: str,
+    output_path: str | None = None,
+    bom_path: str | None = None,
+    schematic_path: str | None = None,
+    origin: str = "aux",
+    include_tht: bool = False,
+    rotation_map_path: str | None = None,
+    strict: bool = False,
+) -> dict:
+    """Export a JLCPCB-ready CPL with rotation corrections and a polarity audit.
+
+    ``origin`` is ``aux`` (KiCad auxiliary/drill origin, Y-up; matches the
+    Gerbers) or ``lower-left``.  The rotation applies the bottom-side mirror
+    and the vendor correction database, plus per-footprint ``FT Rotation
+    Offset`` / ``Rotation Offset`` fields.  The report lists every polarized
+    or pin-1 footprint with its pad-1 net, pad-1 board/view position and the
+    correction applied, and flags footprints whose vendor zero orientation is
+    unknown.  ``bom_path`` enables a BOM/CPL designator match; ``strict``
+    raises on a blocking mismatch.
+    """
+    return cpl.export_cpl(
+        _resolve(pcb_path),
+        output_path=_resolve(output_path) if output_path else None,
+        bom_path=_resolve(bom_path) if bom_path else None,
+        schematic_path=_resolve(schematic_path) if schematic_path else None,
+        origin=origin,
+        include_tht=include_tht,
+        rotation_map_path=_resolve(rotation_map_path) if rotation_map_path else None,
+        strict=strict,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def verify_cpl(
+    pcb_path: str,
+    cpl_path: str,
+    bom_path: str | None = None,
+    schematic_path: str | None = None,
+    origin: str = "auto",
+    include_tht: bool = False,
+    position_tolerance_mm: float = 0.01,
+    rotation_tolerance_deg: float = 0.1,
+    cpl_format: str = "auto",
+    units: str = "mm",
+    strict: bool = False,
+) -> dict:
+    """Verify a CPL file against the PCB, BOM and optional schematic netlist.
+
+    Checks designator coverage, duplicates, mid X/Y, rotation (bottom-side
+    mirror + vendor correction), layer, and pin-1/polarity orientation.  The
+    CPL format is auto-detected (JLCPCB ``Designator/Mid X/Mid Y`` or KiCad
+    POS ``Ref/PosX/PosY``); ``origin="auto"`` selects the aux or lower-left
+    frame by best position fit.  ``no_rotation_correction`` items are
+    warnings for the assembly preview, not blocking errors.
+    """
+    return cpl.verify_cpl(
+        _resolve(pcb_path),
+        _resolve(cpl_path),
+        bom_path=_resolve(bom_path) if bom_path else None,
+        schematic_path=_resolve(schematic_path) if schematic_path else None,
+        origin=origin,
+        include_tht=include_tht,
+        position_tolerance_mm=position_tolerance_mm,
+        rotation_tolerance_deg=rotation_tolerance_deg,
+        cpl_format=cpl_format,
+        units=units,
+        strict=strict,
+    )
 
 
 @mcp.tool

@@ -165,7 +165,13 @@ def read_netlist(path: str | Path) -> dict:
             ref = sexpr.get_value(node, "ref")
             pin = sexpr.get_value(node, "pin")
             if ref is not None:
-                nodes.append({"ref": ref, "pin": pin})
+                nodes.append(
+                    {
+                        "ref": ref,
+                        "pin": pin,
+                        "pinfunction": sexpr.get_value(node, "pinfunction"),
+                    }
+                )
         nets.append({"name": name, "nodes": nodes})
 
     return {"file": str(net_path), "components": components, "nets": nets}

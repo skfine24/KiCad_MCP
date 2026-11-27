@@ -69,6 +69,8 @@ def main() -> int:
             "export_drill",
             "export_bom",
             "export_pos",
+            "export_cpl",
+            "verify_cpl",
             "render_pcb",
             "get_board_info",
             "get_kicad_version",

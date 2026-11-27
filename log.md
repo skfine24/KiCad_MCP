@@ -856,3 +856,79 @@ use it (create project, run ERC/DRC, export manufacturing files).
   `mechanical.check_silk_overlaps` with the project venv.
 - `pytest -q`: 40 passed. MCP `tools/list`: 107 tools, `check_silk_overlaps`
   present. README documents all 107 tool names.
+
+## 2026-11-27 - KiCad MCP server v0.9.5 (CPL generation + verification)
+
+### Summary
+- New `export_cpl` tool: writes a JLCPCB CPL with the bottom-side mirror,
+  the Fabrication Toolkit / JLC-KiCad-Tools rotation database, per-footprint
+  `FT Rotation Offset` / `Rotation Offset` / `RotOffset` overrides and
+  `FT Position Offset` / `Position Offset` / `PosOffset` offsets.  Supports
+  the aux/drill origin (Y-up, Gerber-aligned) and the lower-left origin.
+- New `verify_cpl` tool: checks an existing CPL (ours or a supplier's corrected
+  file) against the PCB, BOM and schematic.  Checks designator coverage,
+  duplicates, mid X/Y tolerance, rotation tolerance (bottom mirror + vendor
+  correction), layer, BOM/CPL match, and pin-1/polarity orientation.  Supports
+  JLCPCB and KiCad POS formats; `origin="auto"` picks aux or lower-left by best
+  position fit.
+- Polarity audit: reports every diode, LED, polarized capacitor, IC, transistor
+  and connector with its pin-1 net, pad-1 board/view position, KiCad rotation,
+  corrected CPL rotation, correction pattern, schematic pin-1 net/function
+  (e.g. `K_1`) and a `needs_review` flag when the vendor zero orientation is
+  unknown.  The bottom-view pad position matches the assembly house's 2D
+  preview frame.
+- `manufacturing_profile` now exports `*-cpl.csv` and records the CPL
+  readiness, errors and warnings in the manifest.
+- `sch_parser.read_netlist` now includes `pinfunction` for each node.
+
+### Files Changed
+- `src/kicad_mcp/cpl.py` (new): PCB parsing, rotation/position rules, CPL CSV,
+  BOM/CPL matching, polarity audit, `export_cpl` and `verify_cpl`.
+- `src/kicad_mcp/sch_parser.py`: netlist node `pinfunction`.
+- `src/kicad_mcp/manufacturing.py`: `include_cpl`, CPL export, manifest
+  `cpl` section, export status fields.
+- `src/kicad_mcp/server.py`: `export_cpl`, `verify_cpl`,
+  `manufacturing_profile(include_cpl=...)`.
+- `tests/test_cpl.py` (new): synthetic PCB/BOM/CPL fixtures; export rows,
+  polarity audit, rotation/position/layer mismatch, missing/extra/duplicate,
+  BOM mismatch, lower-left origin auto-detect, KiCad POS format, strict mode.
+- `tests/stdio_test.py`: expected tools include `export_cpl` and `verify_cpl`.
+- `pyproject.toml`, `src/kicad_mcp/__init__.py`: version 0.9.5.
+- `README.md`: v0.9.5 section, install tags, 109 tools, manufacturing row,
+  version history.
+- `log.md`: this entry.
+
+### Reason
+The drone ESP32-2 SMT order needed a supplier-facing confirmation of D2 and
+the other polarized parts.  The existing `export_pos` only wraps KiCad's POS
+file and does not apply vendor rotations or audit pin 1, so a correct CPL could
+not be verified from the MCP.  The supplier's 2D preview also uses a bottom-side
+mirror that must be reproduced to compare pad-1 positions.
+
+### Root Cause / Gap
+- `export_pos` delegated to `kicad-cli pcb export pos`, which has no JLC
+  rotation corrections, no bottom-side preview frame and no polarity audit.
+- The project-local `jlc_order.py` had the rotation rules but no verifier and
+  no schematic pin-1 comparison.
+- `sch_parser.read_netlist` dropped `pinfunction`, so a diode's `K_1` could not
+  be used to confirm that pad 1 is the cathode.
+
+### Validation
+- `pytest -q`: 49 passed (40 existing + 9 new CPL tests).
+- Drone ESP32-2 board (`kicad/drone_esp32_2.kicad_pcb`):
+  - `export_cpl` -> 90 SMT rows, `ok:true`, `ready:true`; identical to the
+    existing `fabrication/jlc/drone_esp32_2-jlc-cpl.csv` (0 position/rotation/
+    layer differences).
+  - `verify_cpl` on the existing CPL -> `ok:true`, 90/90 matched, 0 missing,
+    0 extra, 0 position/rotation/layer errors.
+  - Polarity audit: 32 items, `polarity_ok` 32/32, `polarity_fail` 0;
+    15 `no_rotation_correction` warnings (D1-D6, LED1-LED4, U1, U3, U4, U5,
+    SW3) for preview review.
+  - D2: `pad1_net=VIN_BB`, `pad2_net=VBAT_PROT`, schematic pin 1 `VIN_BB`
+    (`K_1`), CPL rotation 0, pad-1 view (21.6, 21.5), pad-2 view (24.4, 21.5)
+    -- matches the supplier's bottom 2D image (`-` left / `+` right).
+  - D1: `pad1_net=VIN_BB`, `pad2_net=VBUS`, same correct pattern.
+  - D3-D6: `pad1_net=VBAT`, `pad2_net=M1B..M4B`, rotations 0/180 as designed.
+  - LED1-LED4: `pad1_net=GND`, `pad2_net=LEDx_A`, CPL rotation 0.
+- `manufacturing_profile` on the KiCad demo: CPL export included in the
+  manifest; `pytest` manufacturing test passes.
